@@ -30,7 +30,7 @@
     bind:this="{btnDropdownRef}"
     on:click="{toggleDropdown}"
   >
-    Pahulja
+    Administrator
   </a>
   <div
     bind:this="{popoverDropdownRef}"
@@ -53,61 +53,61 @@
       href="/admin/settings"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
-      Settings
+      Stanari
     </a>
     <a
       use:link
       href="/admin/tables"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
-      Tables
+      Izvodi/Uplate
     </a>
     <a
       use:link
       href="/admin/maps"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
-      Maps
+      Ostalo
     </a>
     <div class="h-0 mx-4 my-2 border border-solid border-blueGray-100" />
     <span
       class="text-sm pt-2 pb-0 px-4 font-bold block w-full whitespace-nowrap bg-transparent text-blueGray-400"
     >
-      Auth Layout
+      Prijava/Registracija
     </span>
     <a
       use:link
       href="/auth/login"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
-      Login
+      Prijavi se
     </a>
     <a
       use:link
       href="/auth/register"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
-      Register
+      Novi korisnik
     </a>
     <div class="h-0 mx-4 my-2 border border-solid border-blueGray-100" />
     <span
       class="text-sm pt-2 pb-0 px-4 font-bold block w-full whitespace-nowrap bg-transparent text-blueGray-400"
     >
-      No Layout
+      Stranice
     </span>
     <a
       use:link
       href="/landing"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
-      Landing
+      Vise o agenciji Pahulja
     </a>
     <a
       use:link
       href="/profile"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
-      Profile
+      Moj profil
     </a>
   </div>
 </div>
