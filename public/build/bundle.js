@@ -4464,7 +4464,7 @@ var app = (function () {
     			attr(hr0, "class", "my-4 md:min-w-full");
     			attr(h60, "class", "md:min-w-full text-blueGray-500 text-xs uppercase font-bold block pt-1 pb-4 no-underline");
 
-    			attr(i2, "class", i2_class_value = "fas fa-tv mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajulaz') !== -1
+    			attr(i2, "class", i2_class_value = "fas fa-plus mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajulaz') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'));
 
@@ -4488,7 +4488,7 @@ var app = (function () {
 
     			attr(li3, "class", "items-center");
 
-    			attr(i4, "class", i4_class_value = "fas fa-table mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
+    			attr(i4, "class", i4_class_value = "fas fa-trash mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'));
 
@@ -4502,7 +4502,7 @@ var app = (function () {
     			attr(ul1, "class", "md:flex-col md:min-w-full flex flex-col list-none");
     			attr(h61, "class", "md:min-w-full text-blueGray-500 text-xs uppercase font-bold block pt-1 pb-4 no-underline");
 
-    			attr(i5, "class", i5_class_value = "fas fa-tv mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajstanara') !== -1
+    			attr(i5, "class", i5_class_value = "fas fa-plus mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajstanara') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'));
 
@@ -4514,7 +4514,7 @@ var app = (function () {
 
     			attr(li5, "class", "items-center");
 
-    			attr(i6, "class", i6_class_value = "fas fa-tools mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
+    			attr(i6, "class", i6_class_value = "fas fa-pen mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'));
 
@@ -4526,7 +4526,7 @@ var app = (function () {
 
     			attr(li6, "class", "items-center");
 
-    			attr(i7, "class", i7_class_value = "fas fa-table mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
+    			attr(i7, "class", i7_class_value = "fas fa-trash mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'));
 
@@ -4538,7 +4538,7 @@ var app = (function () {
 
     			attr(li7, "class", "items-center");
 
-    			attr(i8, "class", i8_class_value = "fas fa-map-marked mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
+    			attr(i8, "class", i8_class_value = "fas fa-credit-card mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'));
 
@@ -4552,7 +4552,7 @@ var app = (function () {
     			attr(ul2, "class", "md:flex-col md:min-w-full flex flex-col list-none");
     			attr(h62, "class", "md:min-w-full text-blueGray-500 text-xs uppercase font-bold block pt-1 pb-4 no-underline");
 
-    			attr(i9, "class", i9_class_value = "fas fa-tv mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajizvod') !== -1
+    			attr(i9, "class", i9_class_value = "fas fa-plus mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajizvod') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'));
 
@@ -4564,7 +4564,7 @@ var app = (function () {
 
     			attr(li9, "class", "items-center");
 
-    			attr(i10, "class", i10_class_value = "fas fa-tools mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
+    			attr(i10, "class", i10_class_value = "fas fa-pen mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'));
 
@@ -4576,7 +4576,7 @@ var app = (function () {
 
     			attr(li10, "class", "items-center");
 
-    			attr(i11, "class", i11_class_value = "fas fa-table mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
+    			attr(i11, "class", i11_class_value = "fas fa-trash mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'));
 
@@ -4588,7 +4588,7 @@ var app = (function () {
 
     			attr(li11, "class", "items-center");
 
-    			attr(i12, "class", i12_class_value = "fas fa-map-marked mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
+    			attr(i12, "class", i12_class_value = "fas fa-pen mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'));
 
@@ -4766,7 +4766,7 @@ var app = (function () {
     			}
     		},
     		p(ctx, [dirty]) {
-    			if (!current || dirty & /*location*/ 1 && i2_class_value !== (i2_class_value = "fas fa-tv mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajulaz') !== -1
+    			if (!current || dirty & /*location*/ 1 && i2_class_value !== (i2_class_value = "fas fa-plus mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajulaz') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'))) {
     				attr(i2, "class", i2_class_value);
@@ -4790,7 +4790,7 @@ var app = (function () {
     				attr(a3, "class", a3_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i4_class_value !== (i4_class_value = "fas fa-table mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
+    			if (!current || dirty & /*location*/ 1 && i4_class_value !== (i4_class_value = "fas fa-trash mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'))) {
     				attr(i4, "class", i4_class_value);
@@ -4802,7 +4802,7 @@ var app = (function () {
     				attr(a4, "class", a4_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i5_class_value !== (i5_class_value = "fas fa-tv mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajstanara') !== -1
+    			if (!current || dirty & /*location*/ 1 && i5_class_value !== (i5_class_value = "fas fa-plus mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajstanara') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'))) {
     				attr(i5, "class", i5_class_value);
@@ -4814,7 +4814,7 @@ var app = (function () {
     				attr(a5, "class", a5_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i6_class_value !== (i6_class_value = "fas fa-tools mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
+    			if (!current || dirty & /*location*/ 1 && i6_class_value !== (i6_class_value = "fas fa-pen mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'))) {
     				attr(i6, "class", i6_class_value);
@@ -4826,7 +4826,7 @@ var app = (function () {
     				attr(a6, "class", a6_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i7_class_value !== (i7_class_value = "fas fa-table mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
+    			if (!current || dirty & /*location*/ 1 && i7_class_value !== (i7_class_value = "fas fa-trash mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'))) {
     				attr(i7, "class", i7_class_value);
@@ -4838,7 +4838,7 @@ var app = (function () {
     				attr(a7, "class", a7_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i8_class_value !== (i8_class_value = "fas fa-map-marked mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
+    			if (!current || dirty & /*location*/ 1 && i8_class_value !== (i8_class_value = "fas fa-credit-card mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'))) {
     				attr(i8, "class", i8_class_value);
@@ -4850,7 +4850,7 @@ var app = (function () {
     				attr(a8, "class", a8_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i9_class_value !== (i9_class_value = "fas fa-tv mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajizvod') !== -1
+    			if (!current || dirty & /*location*/ 1 && i9_class_value !== (i9_class_value = "fas fa-plus mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dodajizvod') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'))) {
     				attr(i9, "class", i9_class_value);
@@ -4862,7 +4862,7 @@ var app = (function () {
     				attr(a9, "class", a9_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i10_class_value !== (i10_class_value = "fas fa-tools mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
+    			if (!current || dirty & /*location*/ 1 && i10_class_value !== (i10_class_value = "fas fa-pen mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'))) {
     				attr(i10, "class", i10_class_value);
@@ -4874,7 +4874,7 @@ var app = (function () {
     				attr(a10, "class", a10_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i11_class_value !== (i11_class_value = "fas fa-table mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
+    			if (!current || dirty & /*location*/ 1 && i11_class_value !== (i11_class_value = "fas fa-trash mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'))) {
     				attr(i11, "class", i11_class_value);
@@ -4886,7 +4886,7 @@ var app = (function () {
     				attr(a11, "class", a11_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i12_class_value !== (i12_class_value = "fas fa-map-marked mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
+    			if (!current || dirty & /*location*/ 1 && i12_class_value !== (i12_class_value = "fas fa-pen mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
     			? 'opacity-75'
     			: 'text-blueGray-300'))) {
     				attr(i12, "class", i12_class_value);
