@@ -3794,7 +3794,7 @@ var app = (function () {
     			t0 = space();
     			div2 = element("div");
     			a1 = element("a");
-    			a1.textContent = "Action";
+    			a1.textContent = "Akcija";
     			t2 = space();
     			a2 = element("a");
     			a2.textContent = "Another action";
@@ -3873,7 +3873,7 @@ var app = (function () {
     	};
     }
 
-    const image = "../assets/img/team-1-800x800.jpg";
+    const image = "../assets/img/logo.png";
     const click_handler$7 = e => e.preventDefault();
     const click_handler_1$2 = e => e.preventDefault();
     const click_handler_2$2 = e => e.preventDefault();
@@ -3947,7 +3947,7 @@ var app = (function () {
     			nav = element("nav");
     			div1 = element("div");
     			a = element("a");
-    			a.textContent = "Dashboard";
+    			a.textContent = "Ulazi";
     			t1 = space();
     			form = element("form");
 
@@ -4261,7 +4261,7 @@ var app = (function () {
     			button0.innerHTML = `<i class="fas fa-bars"></i>`;
     			t0 = space();
     			a0 = element("a");
-    			a0.textContent = "Notus Svelte";
+    			a0.textContent = "Pahulja";
     			t2 = space();
     			ul0 = element("ul");
     			li0 = element("li");
@@ -4275,7 +4275,7 @@ var app = (function () {
     			div2 = element("div");
     			div0 = element("div");
     			a1 = element("a");
-    			a1.textContent = "Notus Svelte";
+    			a1.textContent = "Pahulja";
     			t6 = space();
     			div1 = element("div");
     			button1 = element("button");
@@ -4287,13 +4287,13 @@ var app = (function () {
     			hr0 = element("hr");
     			t9 = space();
     			h60 = element("h6");
-    			h60.textContent = "Admin Layout Pages";
+    			h60.textContent = "Podaci";
     			t11 = space();
     			ul1 = element("ul");
     			li2 = element("li");
     			a2 = element("a");
     			i2 = element("i");
-    			t12 = text("\n            Dashboard");
+    			t12 = text("\n            Ulazi");
     			t13 = space();
     			li3 = element("li");
     			a3 = element("a");
@@ -29133,14 +29133,14 @@ var app = (function () {
     		c() {
     			div3 = element("div");
     			a0 = element("a");
-    			a0.textContent = "Demo Pages";
+    			a0.textContent = "Pahulja";
     			t1 = space();
     			div2 = element("div");
     			span0 = element("span");
-    			span0.textContent = "Admin Layout";
+    			span0.textContent = "Podaci";
     			t3 = space();
     			a1 = element("a");
-    			a1.textContent = "Dashboard";
+    			a1.textContent = "Ulazi";
     			t5 = space();
     			a2 = element("a");
     			a2.textContent = "Settings";
@@ -29346,7 +29346,7 @@ var app = (function () {
     			div2 = element("div");
     			div0 = element("div");
     			a0 = element("a");
-    			a0.textContent = "Notus Svelte";
+    			a0.textContent = "Pahulja";
     			t1 = space();
     			button0 = element("button");
     			button0.innerHTML = `<i class="text-white fas fa-bars"></i>`;
@@ -30147,14 +30147,14 @@ var app = (function () {
     		c() {
     			div3 = element("div");
     			a0 = element("a");
-    			a0.textContent = "Demo Pages";
+    			a0.textContent = "Administrator";
     			t1 = space();
     			div2 = element("div");
     			span0 = element("span");
-    			span0.textContent = "Admin Layout";
+    			span0.textContent = "Podaci";
     			t3 = space();
     			a1 = element("a");
-    			a1.textContent = "Dashboard";
+    			a1.textContent = "Ulazi";
     			t5 = space();
     			a2 = element("a");
     			a2.textContent = "Settings";
@@ -30360,7 +30360,7 @@ var app = (function () {
     			div2 = element("div");
     			div0 = element("div");
     			a0 = element("a");
-    			a0.textContent = "Notus Svelte";
+    			a0.textContent = "Pahulja";
     			t1 = space();
     			button0 = element("button");
     			button0.innerHTML = `<i class="fas fa-bars"></i>`;

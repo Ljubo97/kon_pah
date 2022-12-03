@@ -30,7 +30,7 @@
     bind:this="{btnDropdownRef}"
     on:click="{toggleDropdown}"
   >
-    Demo Pages
+    Pahulja
   </a>
   <div
     bind:this="{popoverDropdownRef}"
@@ -39,14 +39,14 @@
     <span
       class="text-sm pt-2 pb-0 px-4 font-bold block w-full whitespace-nowrap bg-transparent text-blueGray-400"
     >
-      Admin Layout
+      Podaci
     </span>
     <a
       use:link
       href="/admin/dashboard"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
-      Dashboard
+      Ulazi
     </a>
     <a
       use:link
