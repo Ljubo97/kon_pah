@@ -25,6 +25,14 @@ var app = (function () {
     function safe_not_equal(a, b) {
         return a != a ? b == b : a !== b || ((a && typeof a === 'object') || typeof a === 'function');
     }
+    let src_url_equal_anchor;
+    function src_url_equal(element_src, url) {
+        if (!src_url_equal_anchor) {
+            src_url_equal_anchor = document.createElement('a');
+        }
+        src_url_equal_anchor.href = url;
+        return element_src === src_url_equal_anchor.href;
+    }
     function is_empty(obj) {
         return Object.keys(obj).length === 0;
     }
@@ -67,12 +75,22 @@ var app = (function () {
         }
         return $$scope.dirty;
     }
-    function update_slot(slot, slot_definition, ctx, $$scope, dirty, get_slot_changes_fn, get_slot_context_fn) {
-        const slot_changes = get_slot_changes(slot_definition, $$scope, dirty, get_slot_changes_fn);
+    function update_slot_base(slot, slot_definition, ctx, $$scope, slot_changes, get_slot_context_fn) {
         if (slot_changes) {
             const slot_context = get_slot_context(slot_definition, ctx, $$scope, get_slot_context_fn);
             slot.p(slot_context, slot_changes);
         }
+    }
+    function get_all_dirty_from_scope($$scope) {
+        if ($$scope.ctx.length > 32) {
+            const dirty = [];
+            const length = $$scope.ctx.length / 32;
+            for (let i = 0; i < length; i++) {
+                dirty[i] = -1;
+            }
+            return dirty;
+        }
+        return -1;
     }
     function exclude_internal_props(props) {
         const result = {};
@@ -92,7 +110,6 @@ var app = (function () {
     function action_destroyer(action_result) {
         return action_result && is_function(action_result.destroy) ? action_result.destroy : noop;
     }
-
     function append(target, node) {
         target.appendChild(node);
     }
@@ -100,7 +117,9 @@ var app = (function () {
         target.insertBefore(node, anchor || null);
     }
     function detach(node) {
-        node.parentNode.removeChild(node);
+        if (node.parentNode) {
+            node.parentNode.removeChild(node);
+        }
     }
     function element(name) {
         return document.createElement(name);
@@ -154,12 +173,20 @@ var app = (function () {
             text.data = data;
     }
     function set_style(node, key, value, important) {
-        node.style.setProperty(key, value, important ? 'important' : '');
+        if (value === null) {
+            node.style.removeProperty(key);
+        }
+        else {
+            node.style.setProperty(key, value, important ? 'important' : '');
+        }
     }
-    function custom_event(type, detail) {
+    function custom_event(type, detail, { bubbles = false, cancelable = false } = {}) {
         const e = document.createEvent('CustomEvent');
-        e.initCustomEvent(type, false, false, detail);
+        e.initCustomEvent(type, bubbles, cancelable, detail);
         return e;
+    }
+    function construct_svelte_component(component, props) {
+        return new component(props);
     }
 
     let current_component;
@@ -171,29 +198,76 @@ var app = (function () {
             throw new Error('Function called outside component initialization');
         return current_component;
     }
+    /**
+     * The `onMount` function schedules a callback to run as soon as the component has been mounted to the DOM.
+     * It must be called during the component's initialisation (but doesn't need to live *inside* the component;
+     * it can be called from an external module).
+     *
+     * `onMount` does not run inside a [server-side component](/docs#run-time-server-side-component-api).
+     *
+     * https://svelte.dev/docs#run-time-svelte-onmount
+     */
     function onMount(fn) {
         get_current_component().$$.on_mount.push(fn);
     }
+    /**
+     * Schedules a callback to run immediately before the component is unmounted.
+     *
+     * Out of `onMount`, `beforeUpdate`, `afterUpdate` and `onDestroy`, this is the
+     * only one that runs inside a server-side component.
+     *
+     * https://svelte.dev/docs#run-time-svelte-ondestroy
+     */
     function onDestroy(fn) {
         get_current_component().$$.on_destroy.push(fn);
     }
+    /**
+     * Creates an event dispatcher that can be used to dispatch [component events](/docs#template-syntax-component-directives-on-eventname).
+     * Event dispatchers are functions that can take two arguments: `name` and `detail`.
+     *
+     * Component events created with `createEventDispatcher` create a
+     * [CustomEvent](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent).
+     * These events do not [bubble](https://developer.mozilla.org/en-US/docs/Learn/JavaScript/Building_blocks/Events#Event_bubbling_and_capture).
+     * The `detail` argument corresponds to the [CustomEvent.detail](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent/detail)
+     * property and can contain any type of data.
+     *
+     * https://svelte.dev/docs#run-time-svelte-createeventdispatcher
+     */
     function createEventDispatcher() {
         const component = get_current_component();
-        return (type, detail) => {
+        return (type, detail, { cancelable = false } = {}) => {
             const callbacks = component.$$.callbacks[type];
             if (callbacks) {
                 // TODO are there situations where events could be dispatched
                 // in a server (non-DOM) environment?
-                const event = custom_event(type, detail);
+                const event = custom_event(type, detail, { cancelable });
                 callbacks.slice().forEach(fn => {
                     fn.call(component, event);
                 });
+                return !event.defaultPrevented;
             }
+            return true;
         };
     }
+    /**
+     * Associates an arbitrary `context` object with the current component and the specified `key`
+     * and returns that object. The context is then available to children of the component
+     * (including slotted content) with `getContext`.
+     *
+     * Like lifecycle functions, this must be called during component initialisation.
+     *
+     * https://svelte.dev/docs#run-time-svelte-setcontext
+     */
     function setContext(key, context) {
         get_current_component().$$.context.set(key, context);
+        return context;
     }
+    /**
+     * Retrieves the context that belongs to the closest parent component with the specified `key`.
+     * Must be called during component initialisation.
+     *
+     * https://svelte.dev/docs#run-time-svelte-getcontext
+     */
     function getContext(key) {
         return get_current_component().$$.context.get(key);
     }
@@ -213,22 +287,40 @@ var app = (function () {
     function add_render_callback(fn) {
         render_callbacks.push(fn);
     }
-    let flushing = false;
+    // flush() calls callbacks in this order:
+    // 1. All beforeUpdate callbacks, in order: parents before children
+    // 2. All bind:this callbacks, in reverse order: children before parents.
+    // 3. All afterUpdate callbacks, in order: parents before children. EXCEPT
+    //    for afterUpdates called during the initial onMount, which are called in
+    //    reverse order: children before parents.
+    // Since callbacks might update component values, which could trigger another
+    // call to flush(), the following steps guard against this:
+    // 1. During beforeUpdate, any updated components will be added to the
+    //    dirty_components array and will cause a reentrant call to flush(). Because
+    //    the flush index is kept outside the function, the reentrant call will pick
+    //    up where the earlier call left off and go through all dirty components. The
+    //    current_component value is saved and restored so that the reentrant call will
+    //    not interfere with the "parent" flush() call.
+    // 2. bind:this callbacks cannot trigger new flush() calls.
+    // 3. During afterUpdate, any updated components will NOT have their afterUpdate
+    //    callback called a second time; the seen_callbacks set, outside the flush()
+    //    function, guarantees this behavior.
     const seen_callbacks = new Set();
+    let flushidx = 0; // Do *not* move this inside the flush() function
     function flush() {
-        if (flushing)
-            return;
-        flushing = true;
+        const saved_component = current_component;
         do {
             // first, call beforeUpdate functions
             // and update components
-            for (let i = 0; i < dirty_components.length; i += 1) {
-                const component = dirty_components[i];
+            while (flushidx < dirty_components.length) {
+                const component = dirty_components[flushidx];
+                flushidx++;
                 set_current_component(component);
                 update(component.$$);
             }
             set_current_component(null);
             dirty_components.length = 0;
+            flushidx = 0;
             while (binding_callbacks.length)
                 binding_callbacks.pop()();
             // then, once components are updated, call
@@ -248,8 +340,8 @@ var app = (function () {
             flush_callbacks.pop()();
         }
         update_scheduled = false;
-        flushing = false;
         seen_callbacks.clear();
+        set_current_component(saved_component);
     }
     function update($$) {
         if ($$.fragment !== null) {
@@ -297,6 +389,9 @@ var app = (function () {
             });
             block.o(local);
         }
+        else if (callback) {
+            callback();
+        }
     }
 
     function get_spread_update(levels, updates) {
@@ -339,14 +434,17 @@ var app = (function () {
         block && block.c();
     }
     function mount_component(component, target, anchor, customElement) {
-        const { fragment, on_mount, on_destroy, after_update } = component.$$;
+        const { fragment, after_update } = component.$$;
         fragment && fragment.m(target, anchor);
         if (!customElement) {
             // onMount happens before the initial afterUpdate
             add_render_callback(() => {
-                const new_on_destroy = on_mount.map(run).filter(is_function);
-                if (on_destroy) {
-                    on_destroy.push(...new_on_destroy);
+                const new_on_destroy = component.$$.on_mount.map(run).filter(is_function);
+                // if the component was destroyed immediately
+                // it will update the `$$.on_destroy` reference to `null`.
+                // the destructured on_destroy may still reference to the old array
+                if (component.$$.on_destroy) {
+                    component.$$.on_destroy.push(...new_on_destroy);
                 }
                 else {
                     // Edge case - component was destroyed immediately,
@@ -377,12 +475,12 @@ var app = (function () {
         }
         component.$$.dirty[(i / 31) | 0] |= (1 << (i % 31));
     }
-    function init(component, options, instance, create_fragment, not_equal, props, dirty = [-1]) {
+    function init(component, options, instance, create_fragment, not_equal, props, append_styles, dirty = [-1]) {
         const parent_component = current_component;
         set_current_component(component);
         const $$ = component.$$ = {
             fragment: null,
-            ctx: null,
+            ctx: [],
             // state
             props,
             update: noop,
@@ -394,12 +492,14 @@ var app = (function () {
             on_disconnect: [],
             before_update: [],
             after_update: [],
-            context: new Map(parent_component ? parent_component.$$.context : []),
+            context: new Map(options.context || (parent_component ? parent_component.$$.context : [])),
             // everything else
             callbacks: blank_object(),
             dirty,
-            skip_bound: false
+            skip_bound: false,
+            root: options.target || parent_component.$$.root
         };
+        append_styles && append_styles($$.root);
         let ready = false;
         $$.ctx = instance
             ? instance(component, options.props || {}, (i, ret, ...rest) => {
@@ -445,6 +545,9 @@ var app = (function () {
             this.$destroy = noop;
         }
         $on(type, callback) {
+            if (!is_function(callback)) {
+                return noop;
+            }
             const callbacks = (this.$$.callbacks[type] || (this.$$.callbacks[type] = []));
             callbacks.push(callback);
             return () => {
@@ -480,16 +583,15 @@ var app = (function () {
      */
     function writable(value, start = noop) {
         let stop;
-        const subscribers = [];
+        const subscribers = new Set();
         function set(new_value) {
             if (safe_not_equal(value, new_value)) {
                 value = new_value;
                 if (stop) { // store is ready
                     const run_queue = !subscriber_queue.length;
-                    for (let i = 0; i < subscribers.length; i += 1) {
-                        const s = subscribers[i];
-                        s[1]();
-                        subscriber_queue.push(s, value);
+                    for (const subscriber of subscribers) {
+                        subscriber[1]();
+                        subscriber_queue.push(subscriber, value);
                     }
                     if (run_queue) {
                         for (let i = 0; i < subscriber_queue.length; i += 2) {
@@ -505,17 +607,14 @@ var app = (function () {
         }
         function subscribe(run, invalidate = noop) {
             const subscriber = [run, invalidate];
-            subscribers.push(subscriber);
-            if (subscribers.length === 1) {
+            subscribers.add(subscriber);
+            if (subscribers.size === 1) {
                 stop = start(set) || noop;
             }
             run(value);
             return () => {
-                const index = subscribers.indexOf(subscriber);
-                if (index !== -1) {
-                    subscribers.splice(index, 1);
-                }
-                if (subscribers.length === 0) {
+                subscribers.delete(subscriber);
+                if (subscribers.size === 0) {
                     stop();
                     stop = null;
                 }
@@ -1017,7 +1116,7 @@ var app = (function () {
       )
     }
 
-    /* node_modules\svelte-routing\src\Router.svelte generated by Svelte v3.35.0 */
+    /* node_modules/svelte-routing/src/Router.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$A(ctx) {
     	let current;
@@ -1037,8 +1136,17 @@ var app = (function () {
     		},
     		p(ctx, [dirty]) {
     			if (default_slot) {
-    				if (default_slot.p && dirty & /*$$scope*/ 256) {
-    					update_slot(default_slot, default_slot_template, ctx, /*$$scope*/ ctx[8], dirty, null, null);
+    				if (default_slot.p && (!current || dirty & /*$$scope*/ 256)) {
+    					update_slot_base(
+    						default_slot,
+    						default_slot_template,
+    						ctx,
+    						/*$$scope*/ ctx[8],
+    						!current
+    						? get_all_dirty_from_scope(/*$$scope*/ ctx[8])
+    						: get_slot_changes(default_slot_template, /*$$scope*/ ctx[8], dirty, null),
+    						null
+    					);
     				}
     			}
     		},
@@ -1058,16 +1166,16 @@ var app = (function () {
     }
 
     function instance$u($$self, $$props, $$invalidate) {
-    	let $base;
     	let $location;
     	let $routes;
+    	let $base;
     	let { $$slots: slots = {}, $$scope } = $$props;
     	let { basepath = "/" } = $$props;
     	let { url = null } = $$props;
     	const locationContext = getContext(LOCATION);
     	const routerContext = getContext(ROUTER);
     	const routes = writable([]);
-    	component_subscribe($$self, routes, value => $$invalidate(7, $routes = value));
+    	component_subscribe($$self, routes, value => $$invalidate(6, $routes = value));
     	const activeRoute = writable(null);
     	let hasActiveRoute = false; // Used in SSR to synchronously set that a Route is active.
 
@@ -1075,7 +1183,7 @@ var app = (function () {
     	// If the `url` prop is given we force the location to it.
     	const location = locationContext || writable(url ? { pathname: url } : globalHistory.location);
 
-    	component_subscribe($$self, location, value => $$invalidate(6, $location = value));
+    	component_subscribe($$self, location, value => $$invalidate(5, $location = value));
 
     	// If routerContext is set, the routerBase of the parent Router
     	// will be the base for this Router's descendants.
@@ -1085,7 +1193,7 @@ var app = (function () {
     	? routerContext.routerBase
     	: writable({ path: basepath, uri: basepath });
 
-    	component_subscribe($$self, base, value => $$invalidate(5, $base = value));
+    	component_subscribe($$self, base, value => $$invalidate(7, $base = value));
 
     	const routerBase = derived([base, activeRoute], ([base, activeRoute]) => {
     		// If there is no activeRoute, the routerBase will be identical to the base.
@@ -1169,13 +1277,13 @@ var app = (function () {
     	});
 
     	$$self.$$set = $$props => {
-    		if ("basepath" in $$props) $$invalidate(3, basepath = $$props.basepath);
-    		if ("url" in $$props) $$invalidate(4, url = $$props.url);
-    		if ("$$scope" in $$props) $$invalidate(8, $$scope = $$props.$$scope);
+    		if ('basepath' in $$props) $$invalidate(3, basepath = $$props.basepath);
+    		if ('url' in $$props) $$invalidate(4, url = $$props.url);
+    		if ('$$scope' in $$props) $$invalidate(8, $$scope = $$props.$$scope);
     	};
 
     	$$self.$$.update = () => {
-    		if ($$self.$$.dirty & /*$base*/ 32) {
+    		if ($$self.$$.dirty & /*$base*/ 128) {
     			// This reactive statement will update all the Routes' path when
     			// the basepath changes.
     			{
@@ -1188,7 +1296,7 @@ var app = (function () {
     			}
     		}
 
-    		if ($$self.$$.dirty & /*$routes, $location*/ 192) {
+    		if ($$self.$$.dirty & /*$routes, $location*/ 96) {
     			// This reactive statement will be run when the Router is created
     			// when there are no Routes and then again the following tick, so it
     			// will not find an active Route in SSR and in the browser it will only
@@ -1206,9 +1314,9 @@ var app = (function () {
     		base,
     		basepath,
     		url,
-    		$base,
     		$location,
     		$routes,
+    		$base,
     		$$scope,
     		slots
     	];
@@ -1221,7 +1329,7 @@ var app = (function () {
     	}
     }
 
-    /* node_modules\svelte-routing\src\Route.svelte generated by Svelte v3.35.0 */
+    /* node_modules/svelte-routing/src/Route.svelte generated by Svelte v3.53.1 */
 
     const get_default_slot_changes = dirty => ({
     	params: dirty & /*routeParams*/ 4,
@@ -1322,8 +1430,17 @@ var app = (function () {
     		},
     		p(ctx, dirty) {
     			if (default_slot) {
-    				if (default_slot.p && dirty & /*$$scope, routeParams, $location*/ 532) {
-    					update_slot(default_slot, default_slot_template, ctx, /*$$scope*/ ctx[9], dirty, get_default_slot_changes, get_default_slot_context);
+    				if (default_slot.p && (!current || dirty & /*$$scope, routeParams, $location*/ 532)) {
+    					update_slot_base(
+    						default_slot,
+    						default_slot_template,
+    						ctx,
+    						/*$$scope*/ ctx[9],
+    						!current
+    						? get_all_dirty_from_scope(/*$$scope*/ ctx[9])
+    						: get_slot_changes(default_slot_template, /*$$scope*/ ctx[9], dirty, get_default_slot_changes),
+    						get_default_slot_context
+    					);
     				}
     			}
     		},
@@ -1367,7 +1484,7 @@ var app = (function () {
     	}
 
     	if (switch_value) {
-    		switch_instance = new switch_value(switch_props());
+    		switch_instance = construct_svelte_component(switch_value, switch_props());
     	}
 
     	return {
@@ -1376,10 +1493,7 @@ var app = (function () {
     			switch_instance_anchor = empty();
     		},
     		m(target, anchor) {
-    			if (switch_instance) {
-    				mount_component(switch_instance, target, anchor);
-    			}
-
+    			if (switch_instance) mount_component(switch_instance, target, anchor);
     			insert(target, switch_instance_anchor, anchor);
     			current = true;
     		},
@@ -1405,7 +1519,7 @@ var app = (function () {
     				}
 
     				if (switch_value) {
-    					switch_instance = new switch_value(switch_props());
+    					switch_instance = construct_svelte_component(switch_value, switch_props());
     					create_component(switch_instance.$$.fragment);
     					transition_in(switch_instance.$$.fragment, 1);
     					mount_component(switch_instance, switch_instance_anchor.parentNode, switch_instance_anchor);
@@ -1519,9 +1633,9 @@ var app = (function () {
 
     	$$self.$$set = $$new_props => {
     		$$invalidate(13, $$props = assign(assign({}, $$props), exclude_internal_props($$new_props)));
-    		if ("path" in $$new_props) $$invalidate(8, path = $$new_props.path);
-    		if ("component" in $$new_props) $$invalidate(0, component = $$new_props.component);
-    		if ("$$scope" in $$new_props) $$invalidate(9, $$scope = $$new_props.$$scope);
+    		if ('path' in $$new_props) $$invalidate(8, path = $$new_props.path);
+    		if ('component' in $$new_props) $$invalidate(0, component = $$new_props.component);
+    		if ('$$scope' in $$new_props) $$invalidate(9, $$scope = $$new_props.$$scope);
     	};
 
     	$$self.$$.update = () => {
@@ -1561,7 +1675,7 @@ var app = (function () {
     	}
     }
 
-    /* node_modules\svelte-routing\src\Link.svelte generated by Svelte v3.35.0 */
+    /* node_modules/svelte-routing/src/Link.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$y(ctx) {
     	let a;
@@ -1606,8 +1720,17 @@ var app = (function () {
     		},
     		p(ctx, [dirty]) {
     			if (default_slot) {
-    				if (default_slot.p && dirty & /*$$scope*/ 32768) {
-    					update_slot(default_slot, default_slot_template, ctx, /*$$scope*/ ctx[15], dirty, null, null);
+    				if (default_slot.p && (!current || dirty & /*$$scope*/ 32768)) {
+    					update_slot_base(
+    						default_slot,
+    						default_slot_template,
+    						ctx,
+    						/*$$scope*/ ctx[15],
+    						!current
+    						? get_all_dirty_from_scope(/*$$scope*/ ctx[15])
+    						: get_slot_changes(default_slot_template, /*$$scope*/ ctx[15], dirty, null),
+    						null
+    					);
     				}
     			}
 
@@ -1640,17 +1763,17 @@ var app = (function () {
     	let ariaCurrent;
     	const omit_props_names = ["to","replace","state","getProps"];
     	let $$restProps = compute_rest_props($$props, omit_props_names);
-    	let $base;
     	let $location;
+    	let $base;
     	let { $$slots: slots = {}, $$scope } = $$props;
     	let { to = "#" } = $$props;
     	let { replace = false } = $$props;
     	let { state = {} } = $$props;
     	let { getProps = () => ({}) } = $$props;
     	const { base } = getContext(ROUTER);
-    	component_subscribe($$self, base, value => $$invalidate(13, $base = value));
+    	component_subscribe($$self, base, value => $$invalidate(14, $base = value));
     	const location = getContext(LOCATION);
-    	component_subscribe($$self, location, value => $$invalidate(14, $location = value));
+    	component_subscribe($$self, location, value => $$invalidate(13, $location = value));
     	const dispatch = createEventDispatcher();
     	let href, isPartiallyCurrent, isCurrent, props;
 
@@ -1671,23 +1794,23 @@ var app = (function () {
     	$$self.$$set = $$new_props => {
     		$$props = assign(assign({}, $$props), exclude_internal_props($$new_props));
     		$$invalidate(6, $$restProps = compute_rest_props($$props, omit_props_names));
-    		if ("to" in $$new_props) $$invalidate(7, to = $$new_props.to);
-    		if ("replace" in $$new_props) $$invalidate(8, replace = $$new_props.replace);
-    		if ("state" in $$new_props) $$invalidate(9, state = $$new_props.state);
-    		if ("getProps" in $$new_props) $$invalidate(10, getProps = $$new_props.getProps);
-    		if ("$$scope" in $$new_props) $$invalidate(15, $$scope = $$new_props.$$scope);
+    		if ('to' in $$new_props) $$invalidate(7, to = $$new_props.to);
+    		if ('replace' in $$new_props) $$invalidate(8, replace = $$new_props.replace);
+    		if ('state' in $$new_props) $$invalidate(9, state = $$new_props.state);
+    		if ('getProps' in $$new_props) $$invalidate(10, getProps = $$new_props.getProps);
+    		if ('$$scope' in $$new_props) $$invalidate(15, $$scope = $$new_props.$$scope);
     	};
 
     	$$self.$$.update = () => {
-    		if ($$self.$$.dirty & /*to, $base*/ 8320) {
+    		if ($$self.$$.dirty & /*to, $base*/ 16512) {
     			$$invalidate(0, href = to === "/" ? $base.uri : resolve(to, $base.uri));
     		}
 
-    		if ($$self.$$.dirty & /*$location, href*/ 16385) {
+    		if ($$self.$$.dirty & /*$location, href*/ 8193) {
     			$$invalidate(11, isPartiallyCurrent = startsWith($location.pathname, href));
     		}
 
-    		if ($$self.$$.dirty & /*href, $location*/ 16385) {
+    		if ($$self.$$.dirty & /*href, $location*/ 8193) {
     			$$invalidate(12, isCurrent = href === $location.pathname);
     		}
 
@@ -1695,7 +1818,7 @@ var app = (function () {
     			$$invalidate(2, ariaCurrent = isCurrent ? "page" : undefined);
     		}
 
-    		if ($$self.$$.dirty & /*getProps, $location, href, isPartiallyCurrent, isCurrent*/ 23553) {
+    		if ($$self.$$.dirty & /*getProps, $location, href, isPartiallyCurrent, isCurrent*/ 15361) {
     			$$invalidate(1, props = getProps({
     				location: $location,
     				href,
@@ -1719,8 +1842,8 @@ var app = (function () {
     		getProps,
     		isPartiallyCurrent,
     		isCurrent,
-    		$base,
     		$location,
+    		$base,
     		$$scope,
     		slots
     	];
@@ -3637,7 +3760,7 @@ var app = (function () {
       defaultModifiers: defaultModifiers
     }); // eslint-disable-next-line import/no-unused-modules
 
-    /* src\components\Dropdowns\UserDropdown.svelte generated by Svelte v3.35.0 */
+    /* src/components/Dropdowns/UserDropdown.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$x(ctx) {
     	let div3;
@@ -3685,7 +3808,7 @@ var app = (function () {
     			a4.textContent = "Seprated link";
     			attr(img, "alt", "...");
     			attr(img, "class", "w-full rounded-full align-middle border-none shadow-lg");
-    			if (img.src !== (img_src_value = image)) attr(img, "src", img_src_value);
+    			if (!src_url_equal(img.src, img_src_value = image)) attr(img, "src", img_src_value);
     			attr(span, "class", "w-12 h-12 text-sm text-white bg-blueGray-200 inline-flex items-center justify-center rounded-full");
     			attr(div0, "class", "items-center flex");
     			attr(a0, "class", "text-blueGray-500 block");
@@ -3699,7 +3822,7 @@ var app = (function () {
     			attr(div1, "class", "h-0 my-2 border border-solid border-blueGray-100");
     			attr(a4, "href", "#pablo");
     			attr(a4, "class", "text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700");
-    			attr(div2, "class", div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? "block" : "hidden"));
+    			attr(div2, "class", div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? 'block' : 'hidden'));
     		},
     		m(target, anchor) {
     			insert(target, div3, anchor);
@@ -3734,7 +3857,7 @@ var app = (function () {
     			}
     		},
     		p(ctx, [dirty]) {
-    			if (dirty & /*dropdownPopoverShow*/ 1 && div2_class_value !== (div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? "block" : "hidden"))) {
+    			if (dirty & /*dropdownPopoverShow*/ 1 && div2_class_value !== (div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? 'block' : 'hidden'))) {
     				attr(div2, "class", div2_class_value);
     			}
     		},
@@ -3773,14 +3896,14 @@ var app = (function () {
     	};
 
     	function a0_binding($$value) {
-    		binding_callbacks[$$value ? "unshift" : "push"](() => {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			btnDropdownRef = $$value;
     			$$invalidate(1, btnDropdownRef);
     		});
     	}
 
     	function div2_binding($$value) {
-    		binding_callbacks[$$value ? "unshift" : "push"](() => {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			popoverDropdownRef = $$value;
     			$$invalidate(2, popoverDropdownRef);
     		});
@@ -3803,7 +3926,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Navbars\AdminNavbar.svelte generated by Svelte v3.35.0 */
+    /* src/components/Navbars/AdminNavbar.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$w(ctx) {
     	let nav;
@@ -3885,7 +4008,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Dropdowns\NotificationDropdown.svelte generated by Svelte v3.35.0 */
+    /* src/components/Dropdowns/NotificationDropdown.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$v(ctx) {
     	let div2;
@@ -3936,7 +4059,7 @@ var app = (function () {
     			attr(div0, "class", "h-0 my-2 border border-solid border-blueGray-100");
     			attr(a4, "href", "#pablo");
     			attr(a4, "class", "text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700");
-    			attr(div1, "class", div1_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? "block" : "hidden"));
+    			attr(div1, "class", div1_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? 'block' : 'hidden'));
     		},
     		m(target, anchor) {
     			insert(target, div2, anchor);
@@ -3968,7 +4091,7 @@ var app = (function () {
     			}
     		},
     		p(ctx, [dirty]) {
-    			if (dirty & /*dropdownPopoverShow*/ 1 && div1_class_value !== (div1_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? "block" : "hidden"))) {
+    			if (dirty & /*dropdownPopoverShow*/ 1 && div1_class_value !== (div1_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? 'block' : 'hidden'))) {
     				attr(div1, "class", div1_class_value);
     			}
     		},
@@ -4006,14 +4129,14 @@ var app = (function () {
     	};
 
     	function a0_binding($$value) {
-    		binding_callbacks[$$value ? "unshift" : "push"](() => {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			btnDropdownRef = $$value;
     			$$invalidate(1, btnDropdownRef);
     		});
     	}
 
     	function div1_binding($$value) {
-    		binding_callbacks[$$value ? "unshift" : "push"](() => {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			popoverDropdownRef = $$value;
     			$$invalidate(2, popoverDropdownRef);
     		});
@@ -4036,7 +4159,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Sidebar\Sidebar.svelte generated by Svelte v3.35.0 */
+    /* src/components/Sidebar/Sidebar.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$u(ctx) {
     	let nav;
@@ -4277,51 +4400,51 @@ var app = (function () {
     			attr(hr0, "class", "my-4 md:min-w-full");
     			attr(h60, "class", "md:min-w-full text-blueGray-500 text-xs uppercase font-bold block pt-1 pb-4 no-underline");
 
-    			attr(i2, "class", i2_class_value = "fas fa-tv mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf("/admin/dashboard") !== -1
-    			? "opacity-75"
-    			: "text-blueGray-300"));
+    			attr(i2, "class", i2_class_value = "fas fa-tv mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dashboard') !== -1
+    			? 'opacity-75'
+    			: 'text-blueGray-300'));
 
     			attr(a2, "href", "/admin/dashboard");
 
-    			attr(a2, "class", a2_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf("/admin/dashboard") !== -1
-    			? "text-red-500 hover:text-red-600"
-    			: "text-blueGray-700 hover:text-blueGray-500"));
+    			attr(a2, "class", a2_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf('/admin/dashboard') !== -1
+    			? 'text-red-500 hover:text-red-600'
+    			: 'text-blueGray-700 hover:text-blueGray-500'));
 
     			attr(li2, "class", "items-center");
 
-    			attr(i3, "class", i3_class_value = "fas fa-tools mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf("/admin/settings") !== -1
-    			? "opacity-75"
-    			: "text-blueGray-300"));
+    			attr(i3, "class", i3_class_value = "fas fa-tools mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
+    			? 'opacity-75'
+    			: 'text-blueGray-300'));
 
     			attr(a3, "href", "/admin/settings");
 
-    			attr(a3, "class", a3_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf("/admin/settings") !== -1
-    			? "text-red-500 hover:text-red-600"
-    			: "text-blueGray-700 hover:text-blueGray-500"));
+    			attr(a3, "class", a3_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
+    			? 'text-red-500 hover:text-red-600'
+    			: 'text-blueGray-700 hover:text-blueGray-500'));
 
     			attr(li3, "class", "items-center");
 
-    			attr(i4, "class", i4_class_value = "fas fa-table mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf("/admin/tables") !== -1
-    			? "opacity-75"
-    			: "text-blueGray-300"));
+    			attr(i4, "class", i4_class_value = "fas fa-table mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
+    			? 'opacity-75'
+    			: 'text-blueGray-300'));
 
     			attr(a4, "href", "/admin/tables");
 
-    			attr(a4, "class", a4_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf("/admin/tables") !== -1
-    			? "text-red-500 hover:text-red-600"
-    			: "text-blueGray-700 hover:text-blueGray-500"));
+    			attr(a4, "class", a4_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
+    			? 'text-red-500 hover:text-red-600'
+    			: 'text-blueGray-700 hover:text-blueGray-500'));
 
     			attr(li4, "class", "items-center");
 
-    			attr(i5, "class", i5_class_value = "fas fa-map-marked mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf("/admin/maps") !== -1
-    			? "opacity-75"
-    			: "text-blueGray-300"));
+    			attr(i5, "class", i5_class_value = "fas fa-map-marked mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
+    			? 'opacity-75'
+    			: 'text-blueGray-300'));
 
     			attr(a5, "href", "/admin/maps");
 
-    			attr(a5, "class", a5_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf("/admin/maps") !== -1
-    			? "text-red-500 hover:text-red-600"
-    			: "text-blueGray-700 hover:text-blueGray-500"));
+    			attr(a5, "class", a5_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
+    			? 'text-red-500 hover:text-red-600'
+    			: 'text-blueGray-700 hover:text-blueGray-500'));
 
     			attr(li5, "class", "items-center");
     			attr(ul1, "class", "md:flex-col md:min-w-full flex flex-col list-none");
@@ -4449,51 +4572,51 @@ var app = (function () {
     			}
     		},
     		p(ctx, [dirty]) {
-    			if (!current || dirty & /*location*/ 1 && i2_class_value !== (i2_class_value = "fas fa-tv mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf("/admin/dashboard") !== -1
-    			? "opacity-75"
-    			: "text-blueGray-300"))) {
+    			if (!current || dirty & /*location*/ 1 && i2_class_value !== (i2_class_value = "fas fa-tv mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/dashboard') !== -1
+    			? 'opacity-75'
+    			: 'text-blueGray-300'))) {
     				attr(i2, "class", i2_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && a2_class_value !== (a2_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf("/admin/dashboard") !== -1
-    			? "text-red-500 hover:text-red-600"
-    			: "text-blueGray-700 hover:text-blueGray-500"))) {
+    			if (!current || dirty & /*location*/ 1 && a2_class_value !== (a2_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf('/admin/dashboard') !== -1
+    			? 'text-red-500 hover:text-red-600'
+    			: 'text-blueGray-700 hover:text-blueGray-500'))) {
     				attr(a2, "class", a2_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i3_class_value !== (i3_class_value = "fas fa-tools mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf("/admin/settings") !== -1
-    			? "opacity-75"
-    			: "text-blueGray-300"))) {
+    			if (!current || dirty & /*location*/ 1 && i3_class_value !== (i3_class_value = "fas fa-tools mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
+    			? 'opacity-75'
+    			: 'text-blueGray-300'))) {
     				attr(i3, "class", i3_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && a3_class_value !== (a3_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf("/admin/settings") !== -1
-    			? "text-red-500 hover:text-red-600"
-    			: "text-blueGray-700 hover:text-blueGray-500"))) {
+    			if (!current || dirty & /*location*/ 1 && a3_class_value !== (a3_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf('/admin/settings') !== -1
+    			? 'text-red-500 hover:text-red-600'
+    			: 'text-blueGray-700 hover:text-blueGray-500'))) {
     				attr(a3, "class", a3_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i4_class_value !== (i4_class_value = "fas fa-table mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf("/admin/tables") !== -1
-    			? "opacity-75"
-    			: "text-blueGray-300"))) {
+    			if (!current || dirty & /*location*/ 1 && i4_class_value !== (i4_class_value = "fas fa-table mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
+    			? 'opacity-75'
+    			: 'text-blueGray-300'))) {
     				attr(i4, "class", i4_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && a4_class_value !== (a4_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf("/admin/tables") !== -1
-    			? "text-red-500 hover:text-red-600"
-    			: "text-blueGray-700 hover:text-blueGray-500"))) {
+    			if (!current || dirty & /*location*/ 1 && a4_class_value !== (a4_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf('/admin/tables') !== -1
+    			? 'text-red-500 hover:text-red-600'
+    			: 'text-blueGray-700 hover:text-blueGray-500'))) {
     				attr(a4, "class", a4_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && i5_class_value !== (i5_class_value = "fas fa-map-marked mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf("/admin/maps") !== -1
-    			? "opacity-75"
-    			: "text-blueGray-300"))) {
+    			if (!current || dirty & /*location*/ 1 && i5_class_value !== (i5_class_value = "fas fa-map-marked mr-2 text-sm " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
+    			? 'opacity-75'
+    			: 'text-blueGray-300'))) {
     				attr(i5, "class", i5_class_value);
     			}
 
-    			if (!current || dirty & /*location*/ 1 && a5_class_value !== (a5_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf("/admin/maps") !== -1
-    			? "text-red-500 hover:text-red-600"
-    			: "text-blueGray-700 hover:text-blueGray-500"))) {
+    			if (!current || dirty & /*location*/ 1 && a5_class_value !== (a5_class_value = "text-xs uppercase py-3 font-bold block " + (/*location*/ ctx[0].href.indexOf('/admin/maps') !== -1
+    			? 'text-red-500 hover:text-red-600'
+    			: 'text-blueGray-700 hover:text-blueGray-500'))) {
     				attr(a5, "class", a5_class_value);
     			}
 
@@ -4530,11 +4653,11 @@ var app = (function () {
     	}
 
     	let { location } = $$props;
-    	const click_handler = () => toggleCollapseShow("bg-white m-2 py-3 px-6");
-    	const click_handler_1 = () => toggleCollapseShow("hidden");
+    	const click_handler = () => toggleCollapseShow('bg-white m-2 py-3 px-6');
+    	const click_handler_1 = () => toggleCollapseShow('hidden');
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
     	};
 
     	return [location, collapseShow, toggleCollapseShow, click_handler, click_handler_1];
@@ -4547,7 +4670,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Cards\CardStats.svelte generated by Svelte v3.35.0 */
+    /* src/components/Cards/CardStats.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$t(ctx) {
     	let div5;
@@ -4610,9 +4733,9 @@ var app = (function () {
     			attr(div2, "class", "relative w-auto pl-4 flex-initial");
     			attr(div3, "class", "flex flex-wrap");
 
-    			attr(i1, "class", i1_class_value = /*statArrow*/ ctx[2] === "up"
-    			? "fas fa-arrow-up"
-    			: "fas fa-arrow-down");
+    			attr(i1, "class", i1_class_value = /*statArrow*/ ctx[2] === 'up'
+    			? 'fas fa-arrow-up'
+    			: 'fas fa-arrow-down');
 
     			attr(span1, "class", span1_class_value = "mr-2 " + /*statPercentColor*/ ctx[4]);
     			attr(span2, "class", "whitespace-nowrap");
@@ -4657,9 +4780,9 @@ var app = (function () {
     				attr(div1, "class", div1_class_value);
     			}
 
-    			if (dirty & /*statArrow*/ 4 && i1_class_value !== (i1_class_value = /*statArrow*/ ctx[2] === "up"
-    			? "fas fa-arrow-up"
-    			: "fas fa-arrow-down")) {
+    			if (dirty & /*statArrow*/ 4 && i1_class_value !== (i1_class_value = /*statArrow*/ ctx[2] === 'up'
+    			? 'fas fa-arrow-up'
+    			: 'fas fa-arrow-down')) {
     				attr(i1, "class", i1_class_value);
     			}
 
@@ -4690,14 +4813,14 @@ var app = (function () {
     	let { statIconColor = "bg-red-500" } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("statSubtitle" in $$props) $$invalidate(0, statSubtitle = $$props.statSubtitle);
-    		if ("statTitle" in $$props) $$invalidate(1, statTitle = $$props.statTitle);
-    		if ("statArrow" in $$props) $$invalidate(2, statArrow = $$props.statArrow);
-    		if ("statPercent" in $$props) $$invalidate(3, statPercent = $$props.statPercent);
-    		if ("statPercentColor" in $$props) $$invalidate(4, statPercentColor = $$props.statPercentColor);
-    		if ("statDescripiron" in $$props) $$invalidate(5, statDescripiron = $$props.statDescripiron);
-    		if ("statIconName" in $$props) $$invalidate(6, statIconName = $$props.statIconName);
-    		if ("statIconColor" in $$props) $$invalidate(7, statIconColor = $$props.statIconColor);
+    		if ('statSubtitle' in $$props) $$invalidate(0, statSubtitle = $$props.statSubtitle);
+    		if ('statTitle' in $$props) $$invalidate(1, statTitle = $$props.statTitle);
+    		if ('statArrow' in $$props) $$invalidate(2, statArrow = $$props.statArrow);
+    		if ('statPercent' in $$props) $$invalidate(3, statPercent = $$props.statPercent);
+    		if ('statPercentColor' in $$props) $$invalidate(4, statPercentColor = $$props.statPercentColor);
+    		if ('statDescripiron' in $$props) $$invalidate(5, statDescripiron = $$props.statDescripiron);
+    		if ('statIconName' in $$props) $$invalidate(6, statIconName = $$props.statIconName);
+    		if ('statIconColor' in $$props) $$invalidate(7, statIconColor = $$props.statIconColor);
     	};
 
     	return [
@@ -4729,7 +4852,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Headers\HeaderStats.svelte generated by Svelte v3.35.0 */
+    /* src/components/Headers/HeaderStats.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$s(ctx) {
     	let div7;
@@ -4877,7 +5000,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Footers\FooterAdmin.svelte generated by Svelte v3.35.0 */
+    /* src/components/Footers/FooterAdmin.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$r(ctx) {
     	let footer;
@@ -26816,7 +26939,7 @@ var app = (function () {
     })));
     });
 
-    /* src\components\Cards\CardLineChart.svelte generated by Svelte v3.35.0 */
+    /* src/components/Cards/CardLineChart.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$q(ctx) {
     	let div5;
@@ -26940,7 +27063,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Cards\CardBarChart.svelte generated by Svelte v3.35.0 */
+    /* src/components/Cards/CardBarChart.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$p(ctx) {
     	let div5;
@@ -27051,7 +27174,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Cards\CardPageVisits.svelte generated by Svelte v3.35.0 */
+    /* src/components/Cards/CardPageVisits.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$o(ctx) {
     	let div5;
@@ -27113,7 +27236,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Cards\CardSocialTraffic.svelte generated by Svelte v3.35.0 */
+    /* src/components/Cards/CardSocialTraffic.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$n(ctx) {
     	let div25;
@@ -27169,7 +27292,7 @@ var app = (function () {
     	}
     }
 
-    /* src\views\admin\Dashboard.svelte generated by Svelte v3.35.0 */
+    /* src/views/admin/Dashboard.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$m(ctx) {
     	let div6;
@@ -27262,7 +27385,7 @@ var app = (function () {
     	let { location } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
     	};
 
     	return [location];
@@ -27275,7 +27398,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Cards\CardSettings.svelte generated by Svelte v3.35.0 */
+    /* src/components/Cards/CardSettings.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$l(ctx) {
     	let div24;
@@ -27312,8 +27435,8 @@ var app = (function () {
 
       <h6 class="text-blueGray-400 text-sm mt-3 mb-6 font-bold uppercase">About Me</h6> 
       <div class="flex flex-wrap"><div class="w-full lg:w-12/12 px-4"><div class="relative w-full mb-3"><label class="block uppercase text-blueGray-600 text-xs font-bold mb-2" for="grid-about-me">About me</label> 
-            <textarea id="grid-about-me" type="text" class="border-0 px-3 py-3 placeholder-blueGray-300 text-blueGray-600 bg-white rounded text-sm shadow focus:outline-none focus:ring w-full ease-linear transition-all duration-150" rows="4" value="A beautiful UI Kit and Admin for Svelte &amp; Tailwind CSS. It is Free
-                and Open Source."></textarea></div></div></div></form></div>`;
+            <textarea id="grid-about-me" type="text" class="border-0 px-3 py-3 placeholder-blueGray-300 text-blueGray-600 bg-white rounded text-sm shadow focus:outline-none focus:ring w-full ease-linear transition-all duration-150" rows="4">A beautiful UI Kit and Admin for Svelte &amp; Tailwind CSS. It is Free
+                and Open Source.</textarea></div></div></div></form></div>`;
 
     			attr(div24, "class", "relative flex flex-col min-w-0 break-words w-full mb-6 shadow-lg rounded-lg bg-blueGray-100 border-0");
     		},
@@ -27336,7 +27459,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Cards\CardProfile.svelte generated by Svelte v3.35.0 */
+    /* src/components/Cards/CardProfile.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$k(ctx) {
     	let div16;
@@ -27399,7 +27522,7 @@ var app = (function () {
     			a = element("a");
     			a.textContent = "Show more";
     			attr(img, "alt", "...");
-    			if (img.src !== (img_src_value = team2$3)) attr(img, "src", img_src_value);
+    			if (!src_url_equal(img.src, img_src_value = team2$3)) attr(img, "src", img_src_value);
     			attr(img, "class", "shadow-xl rounded-full h-auto align-middle border-none absolute -m-16 -ml-20 lg:-ml-16 max-w-150-px");
     			attr(div0, "class", "relative");
     			attr(div1, "class", "w-full px-4 flex justify-center");
@@ -27460,7 +27583,7 @@ var app = (function () {
     	}
     }
 
-    /* src\views\admin\Settings.svelte generated by Svelte v3.35.0 */
+    /* src/views/admin/Settings.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$j(ctx) {
     	let div2;
@@ -27518,7 +27641,7 @@ var app = (function () {
     	let { location } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
     	};
 
     	return [location];
@@ -27531,7 +27654,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Dropdowns\TableDropdown.svelte generated by Svelte v3.35.0 */
+    /* src/components/Dropdowns/TableDropdown.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$i(ctx) {
     	let div1;
@@ -27570,7 +27693,7 @@ var app = (function () {
     			attr(a2, "class", "text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700");
     			attr(a3, "href", "#pablo");
     			attr(a3, "class", "text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700");
-    			attr(div0, "class", div0_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? "block" : "hidden"));
+    			attr(div0, "class", div0_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? 'block' : 'hidden'));
     		},
     		m(target, anchor) {
     			insert(target, div1, anchor);
@@ -27597,7 +27720,7 @@ var app = (function () {
     			}
     		},
     		p(ctx, [dirty]) {
-    			if (dirty & /*dropdownPopoverShow*/ 1 && div0_class_value !== (div0_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? "block" : "hidden"))) {
+    			if (dirty & /*dropdownPopoverShow*/ 1 && div0_class_value !== (div0_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? 'block' : 'hidden'))) {
     				attr(div0, "class", div0_class_value);
     			}
     		},
@@ -27634,14 +27757,14 @@ var app = (function () {
     	};
 
     	function a0_binding($$value) {
-    		binding_callbacks[$$value ? "unshift" : "push"](() => {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			btnDropdownRef = $$value;
     			$$invalidate(1, btnDropdownRef);
     		});
     	}
 
     	function div0_binding($$value) {
-    		binding_callbacks[$$value ? "unshift" : "push"](() => {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			popoverDropdownRef = $$value;
     			$$invalidate(2, popoverDropdownRef);
     		});
@@ -27664,7 +27787,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Cards\CardTable.svelte generated by Svelte v3.35.0 */
+    /* src/components/Cards/CardTable.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$h(ctx) {
     	let div29;
@@ -28067,167 +28190,167 @@ var app = (function () {
     			td24 = element("td");
     			create_component(tabledropdown4.$$.fragment);
 
-    			attr(h3, "class", h3_class_value = "font-semibold text-lg " + (/*color*/ ctx[0] === "light"
-    			? "text-blueGray-700"
-    			: "text-white"));
+    			attr(h3, "class", h3_class_value = "font-semibold text-lg " + (/*color*/ ctx[0] === 'light'
+    			? 'text-blueGray-700'
+    			: 'text-white'));
 
     			attr(div0, "class", "relative w-full px-4 max-w-full flex-grow flex-1");
     			attr(div1, "class", "flex flex-wrap items-center");
     			attr(div2, "class", "rounded-t mb-0 px-4 py-3 border-0");
 
-    			attr(th0, "class", th0_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"));
+    			attr(th0, "class", th0_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'));
 
-    			attr(th1, "class", th1_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"));
+    			attr(th1, "class", th1_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'));
 
-    			attr(th2, "class", th2_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"));
+    			attr(th2, "class", th2_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'));
 
-    			attr(th3, "class", th3_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"));
+    			attr(th3, "class", th3_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'));
 
-    			attr(th4, "class", th4_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"));
+    			attr(th4, "class", th4_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'));
 
-    			attr(th5, "class", th5_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"));
+    			attr(th5, "class", th5_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'));
 
-    			if (img0.src !== (img0_src_value = bootstrap)) attr(img0, "src", img0_src_value);
+    			if (!src_url_equal(img0.src, img0_src_value = bootstrap)) attr(img0, "src", img0_src_value);
     			attr(img0, "class", "h-12 w-12 bg-white rounded-full border");
     			attr(img0, "alt", "...");
 
-    			attr(span0, "class", span0_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === "light"
-    			? "btext-blueGray-600"
-    			: "text-whit"));
+    			attr(span0, "class", span0_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === 'light'
+    			? 'btext-blueGray-600'
+    			: 'text-whit'));
 
     			attr(th6, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4 text-left flex items-center");
     			attr(td0, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td1, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
-    			if (img1.src !== (img1_src_value = team1$1)) attr(img1, "src", img1_src_value);
+    			if (!src_url_equal(img1.src, img1_src_value = team1$1)) attr(img1, "src", img1_src_value);
     			attr(img1, "alt", "...");
     			attr(img1, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow");
-    			if (img2.src !== (img2_src_value = team2$2)) attr(img2, "src", img2_src_value);
+    			if (!src_url_equal(img2.src, img2_src_value = team2$2)) attr(img2, "src", img2_src_value);
     			attr(img2, "alt", "...");
     			attr(img2, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
-    			if (img3.src !== (img3_src_value = team3$1)) attr(img3, "src", img3_src_value);
+    			if (!src_url_equal(img3.src, img3_src_value = team3$1)) attr(img3, "src", img3_src_value);
     			attr(img3, "alt", "...");
     			attr(img3, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
-    			if (img4.src !== (img4_src_value = team4$1)) attr(img4, "src", img4_src_value);
+    			if (!src_url_equal(img4.src, img4_src_value = team4$1)) attr(img4, "src", img4_src_value);
     			attr(img4, "alt", "...");
     			attr(img4, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
     			attr(div3, "class", "flex");
     			attr(td2, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td3, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td4, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4 text-right");
-    			if (img5.src !== (img5_src_value = angular)) attr(img5, "src", img5_src_value);
+    			if (!src_url_equal(img5.src, img5_src_value = angular)) attr(img5, "src", img5_src_value);
     			attr(img5, "class", "h-12 w-12 bg-white rounded-full border");
     			attr(img5, "alt", "...");
 
-    			attr(span2, "class", span2_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === "light"
-    			? "btext-blueGray-600"
-    			: "text-whit"));
+    			attr(span2, "class", span2_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === 'light'
+    			? 'btext-blueGray-600'
+    			: 'text-whit'));
 
     			attr(th7, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4 text-left flex items-center");
     			attr(td5, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td6, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
-    			if (img6.src !== (img6_src_value = team1$1)) attr(img6, "src", img6_src_value);
+    			if (!src_url_equal(img6.src, img6_src_value = team1$1)) attr(img6, "src", img6_src_value);
     			attr(img6, "alt", "...");
     			attr(img6, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow");
-    			if (img7.src !== (img7_src_value = team2$2)) attr(img7, "src", img7_src_value);
+    			if (!src_url_equal(img7.src, img7_src_value = team2$2)) attr(img7, "src", img7_src_value);
     			attr(img7, "alt", "...");
     			attr(img7, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
-    			if (img8.src !== (img8_src_value = team3$1)) attr(img8, "src", img8_src_value);
+    			if (!src_url_equal(img8.src, img8_src_value = team3$1)) attr(img8, "src", img8_src_value);
     			attr(img8, "alt", "...");
     			attr(img8, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
-    			if (img9.src !== (img9_src_value = team4$1)) attr(img9, "src", img9_src_value);
+    			if (!src_url_equal(img9.src, img9_src_value = team4$1)) attr(img9, "src", img9_src_value);
     			attr(img9, "alt", "...");
     			attr(img9, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
     			attr(div8, "class", "flex");
     			attr(td7, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td8, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td9, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4 text-right");
-    			if (img10.src !== (img10_src_value = sketch)) attr(img10, "src", img10_src_value);
+    			if (!src_url_equal(img10.src, img10_src_value = sketch)) attr(img10, "src", img10_src_value);
     			attr(img10, "class", "h-12 w-12 bg-white rounded-full border");
     			attr(img10, "alt", "...");
 
-    			attr(span4, "class", span4_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === "light"
-    			? "btext-blueGray-600"
-    			: "text-whit"));
+    			attr(span4, "class", span4_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === 'light'
+    			? 'btext-blueGray-600'
+    			: 'text-whit'));
 
     			attr(th8, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4 text-left flex items-center");
     			attr(td10, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td11, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
-    			if (img11.src !== (img11_src_value = team1$1)) attr(img11, "src", img11_src_value);
+    			if (!src_url_equal(img11.src, img11_src_value = team1$1)) attr(img11, "src", img11_src_value);
     			attr(img11, "alt", "...");
     			attr(img11, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow");
-    			if (img12.src !== (img12_src_value = team2$2)) attr(img12, "src", img12_src_value);
+    			if (!src_url_equal(img12.src, img12_src_value = team2$2)) attr(img12, "src", img12_src_value);
     			attr(img12, "alt", "...");
     			attr(img12, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
-    			if (img13.src !== (img13_src_value = team3$1)) attr(img13, "src", img13_src_value);
+    			if (!src_url_equal(img13.src, img13_src_value = team3$1)) attr(img13, "src", img13_src_value);
     			attr(img13, "alt", "...");
     			attr(img13, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
-    			if (img14.src !== (img14_src_value = team4$1)) attr(img14, "src", img14_src_value);
+    			if (!src_url_equal(img14.src, img14_src_value = team4$1)) attr(img14, "src", img14_src_value);
     			attr(img14, "alt", "...");
     			attr(img14, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
     			attr(div13, "class", "flex");
     			attr(td12, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td13, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td14, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4 text-right");
-    			if (img15.src !== (img15_src_value = react)) attr(img15, "src", img15_src_value);
+    			if (!src_url_equal(img15.src, img15_src_value = react)) attr(img15, "src", img15_src_value);
     			attr(img15, "class", "h-12 w-12 bg-white rounded-full border");
     			attr(img15, "alt", "...");
 
-    			attr(span6, "class", span6_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === "light"
-    			? "btext-blueGray-600"
-    			: "text-whit"));
+    			attr(span6, "class", span6_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === 'light'
+    			? 'btext-blueGray-600'
+    			: 'text-whit'));
 
     			attr(th9, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4 text-left flex items-center");
     			attr(td15, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td16, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
-    			if (img16.src !== (img16_src_value = team1$1)) attr(img16, "src", img16_src_value);
+    			if (!src_url_equal(img16.src, img16_src_value = team1$1)) attr(img16, "src", img16_src_value);
     			attr(img16, "alt", "...");
     			attr(img16, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow");
-    			if (img17.src !== (img17_src_value = team2$2)) attr(img17, "src", img17_src_value);
+    			if (!src_url_equal(img17.src, img17_src_value = team2$2)) attr(img17, "src", img17_src_value);
     			attr(img17, "alt", "...");
     			attr(img17, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
-    			if (img18.src !== (img18_src_value = team3$1)) attr(img18, "src", img18_src_value);
+    			if (!src_url_equal(img18.src, img18_src_value = team3$1)) attr(img18, "src", img18_src_value);
     			attr(img18, "alt", "...");
     			attr(img18, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
-    			if (img19.src !== (img19_src_value = team4$1)) attr(img19, "src", img19_src_value);
+    			if (!src_url_equal(img19.src, img19_src_value = team4$1)) attr(img19, "src", img19_src_value);
     			attr(img19, "alt", "...");
     			attr(img19, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
     			attr(div18, "class", "flex");
     			attr(td17, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td18, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td19, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4 text-right");
-    			if (img20.src !== (img20_src_value = vue)) attr(img20, "src", img20_src_value);
+    			if (!src_url_equal(img20.src, img20_src_value = vue)) attr(img20, "src", img20_src_value);
     			attr(img20, "class", "h-12 w-12 bg-white rounded-full border");
     			attr(img20, "alt", "...");
 
-    			attr(span8, "class", span8_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === "light"
-    			? "btext-blueGray-600"
-    			: "text-whit"));
+    			attr(span8, "class", span8_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === 'light'
+    			? 'btext-blueGray-600'
+    			: 'text-whit'));
 
     			attr(th10, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4 text-left flex items-center");
     			attr(td20, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
     			attr(td21, "class", "border-t-0 px-6 align-middle border-l-0 border-r-0 text-xs whitespace-nowrap p-4");
-    			if (img21.src !== (img21_src_value = team1$1)) attr(img21, "src", img21_src_value);
+    			if (!src_url_equal(img21.src, img21_src_value = team1$1)) attr(img21, "src", img21_src_value);
     			attr(img21, "alt", "...");
     			attr(img21, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow");
-    			if (img22.src !== (img22_src_value = team2$2)) attr(img22, "src", img22_src_value);
+    			if (!src_url_equal(img22.src, img22_src_value = team2$2)) attr(img22, "src", img22_src_value);
     			attr(img22, "alt", "...");
     			attr(img22, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
-    			if (img23.src !== (img23_src_value = team3$1)) attr(img23, "src", img23_src_value);
+    			if (!src_url_equal(img23.src, img23_src_value = team3$1)) attr(img23, "src", img23_src_value);
     			attr(img23, "alt", "...");
     			attr(img23, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
-    			if (img24.src !== (img24_src_value = team4$1)) attr(img24, "src", img24_src_value);
+    			if (!src_url_equal(img24.src, img24_src_value = team4$1)) attr(img24, "src", img24_src_value);
     			attr(img24, "alt", "...");
     			attr(img24, "class", "w-10 h-10 rounded-full border-2 border-blueGray-50 shadow -ml-4");
     			attr(div23, "class", "flex");
@@ -28237,9 +28360,9 @@ var app = (function () {
     			attr(table, "class", "items-center w-full bg-transparent border-collapse");
     			attr(div28, "class", "block w-full overflow-x-auto");
 
-    			attr(div29, "class", div29_class_value = "relative flex flex-col min-w-0 break-words w-full mb-6 shadow-lg rounded " + (/*color*/ ctx[0] === "light"
-    			? "bg-white"
-    			: "bg-red-800 text-white"));
+    			attr(div29, "class", div29_class_value = "relative flex flex-col min-w-0 break-words w-full mb-6 shadow-lg rounded " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-white'
+    			: 'bg-red-800 text-white'));
     		},
     		m(target, anchor) {
     			insert(target, div29, anchor);
@@ -28403,81 +28526,81 @@ var app = (function () {
     			current = true;
     		},
     		p(ctx, [dirty]) {
-    			if (!current || dirty & /*color*/ 1 && h3_class_value !== (h3_class_value = "font-semibold text-lg " + (/*color*/ ctx[0] === "light"
-    			? "text-blueGray-700"
-    			: "text-white"))) {
+    			if (!current || dirty & /*color*/ 1 && h3_class_value !== (h3_class_value = "font-semibold text-lg " + (/*color*/ ctx[0] === 'light'
+    			? 'text-blueGray-700'
+    			: 'text-white'))) {
     				attr(h3, "class", h3_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && th0_class_value !== (th0_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"))) {
+    			if (!current || dirty & /*color*/ 1 && th0_class_value !== (th0_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'))) {
     				attr(th0, "class", th0_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && th1_class_value !== (th1_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"))) {
+    			if (!current || dirty & /*color*/ 1 && th1_class_value !== (th1_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'))) {
     				attr(th1, "class", th1_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && th2_class_value !== (th2_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"))) {
+    			if (!current || dirty & /*color*/ 1 && th2_class_value !== (th2_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'))) {
     				attr(th2, "class", th2_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && th3_class_value !== (th3_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"))) {
+    			if (!current || dirty & /*color*/ 1 && th3_class_value !== (th3_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'))) {
     				attr(th3, "class", th3_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && th4_class_value !== (th4_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"))) {
+    			if (!current || dirty & /*color*/ 1 && th4_class_value !== (th4_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'))) {
     				attr(th4, "class", th4_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && th5_class_value !== (th5_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === "light"
-    			? "bg-blueGray-50 text-blueGray-500 border-blueGray-100"
-    			: "bg-red-700 text-red-200 border-red-600"))) {
+    			if (!current || dirty & /*color*/ 1 && th5_class_value !== (th5_class_value = "px-6 align-middle border border-solid py-3 text-xs uppercase border-l-0 border-r-0 whitespace-nowrap font-semibold text-left " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-blueGray-50 text-blueGray-500 border-blueGray-100'
+    			: 'bg-red-700 text-red-200 border-red-600'))) {
     				attr(th5, "class", th5_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && span0_class_value !== (span0_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === "light"
-    			? "btext-blueGray-600"
-    			: "text-whit"))) {
+    			if (!current || dirty & /*color*/ 1 && span0_class_value !== (span0_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === 'light'
+    			? 'btext-blueGray-600'
+    			: 'text-whit'))) {
     				attr(span0, "class", span0_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && span2_class_value !== (span2_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === "light"
-    			? "btext-blueGray-600"
-    			: "text-whit"))) {
+    			if (!current || dirty & /*color*/ 1 && span2_class_value !== (span2_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === 'light'
+    			? 'btext-blueGray-600'
+    			: 'text-whit'))) {
     				attr(span2, "class", span2_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && span4_class_value !== (span4_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === "light"
-    			? "btext-blueGray-600"
-    			: "text-whit"))) {
+    			if (!current || dirty & /*color*/ 1 && span4_class_value !== (span4_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === 'light'
+    			? 'btext-blueGray-600'
+    			: 'text-whit'))) {
     				attr(span4, "class", span4_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && span6_class_value !== (span6_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === "light"
-    			? "btext-blueGray-600"
-    			: "text-whit"))) {
+    			if (!current || dirty & /*color*/ 1 && span6_class_value !== (span6_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === 'light'
+    			? 'btext-blueGray-600'
+    			: 'text-whit'))) {
     				attr(span6, "class", span6_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && span8_class_value !== (span8_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === "light"
-    			? "btext-blueGray-600"
-    			: "text-whit"))) {
+    			if (!current || dirty & /*color*/ 1 && span8_class_value !== (span8_class_value = "ml-3 font-bold " + (/*color*/ ctx[0] === 'light'
+    			? 'btext-blueGray-600'
+    			: 'text-whit'))) {
     				attr(span8, "class", span8_class_value);
     			}
 
-    			if (!current || dirty & /*color*/ 1 && div29_class_value !== (div29_class_value = "relative flex flex-col min-w-0 break-words w-full mb-6 shadow-lg rounded " + (/*color*/ ctx[0] === "light"
-    			? "bg-white"
-    			: "bg-red-800 text-white"))) {
+    			if (!current || dirty & /*color*/ 1 && div29_class_value !== (div29_class_value = "relative flex flex-col min-w-0 break-words w-full mb-6 shadow-lg rounded " + (/*color*/ ctx[0] === 'light'
+    			? 'bg-white'
+    			: 'bg-red-800 text-white'))) {
     				attr(div29, "class", div29_class_value);
     			}
     		},
@@ -28523,7 +28646,7 @@ var app = (function () {
     	let { color = "light" } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("color" in $$props) $$invalidate(0, color = $$props.color);
+    		if ('color' in $$props) $$invalidate(0, color = $$props.color);
     	};
 
     	return [color];
@@ -28536,7 +28659,7 @@ var app = (function () {
     	}
     }
 
-    /* src\views\admin\Tables.svelte generated by Svelte v3.35.0 */
+    /* src/views/admin/Tables.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$g(ctx) {
     	let div2;
@@ -28594,7 +28717,7 @@ var app = (function () {
     	let { location } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
     	};
 
     	return [location];
@@ -28607,7 +28730,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Maps\MapExample.svelte generated by Svelte v3.35.0 */
+    /* src/components/Maps/MapExample.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$f(ctx) {
     	let div;
@@ -28698,7 +28821,7 @@ var app = (function () {
     				title: "Hello World!"
     			});
 
-    		const contentString = "<div class=\"info-window-content\"><h2>Notus Svelte</h2>" + "<p>A beautiful UI Kit and Admin for Tailwind CSS. It is Free and Open Source.</p></div>";
+    		const contentString = '<div class="info-window-content"><h2>Notus Svelte</h2>' + "<p>A beautiful UI Kit and Admin for Tailwind CSS. It is Free and Open Source.</p></div>";
     		const infowindow = new google.maps.InfoWindow({ content: contentString });
 
     		google.maps.event.addListener(marker, "click", function () {
@@ -28716,7 +28839,7 @@ var app = (function () {
     	}
     }
 
-    /* src\views\admin\Maps.svelte generated by Svelte v3.35.0 */
+    /* src/views/admin/Maps.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$e(ctx) {
     	let div2;
@@ -28764,7 +28887,7 @@ var app = (function () {
     	let { location } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
     	};
 
     	return [location];
@@ -28777,7 +28900,7 @@ var app = (function () {
     	}
     }
 
-    /* src\layouts\Admin.svelte generated by Svelte v3.35.0 */
+    /* src/layouts/Admin.svelte generated by Svelte v3.53.1 */
 
     function create_default_slot$3(ctx) {
     	let route0;
@@ -28956,8 +29079,8 @@ var app = (function () {
     	let { admin = "" } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
-    		if ("admin" in $$props) $$invalidate(1, admin = $$props.admin);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
+    		if ('admin' in $$props) $$invalidate(1, admin = $$props.admin);
     	};
 
     	return [location, admin];
@@ -28970,7 +29093,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Dropdowns\PagesDropdown.svelte generated by Svelte v3.35.0 */
+    /* src/components/Dropdowns/PagesDropdown.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$c(ctx) {
     	let div3;
@@ -29072,7 +29195,7 @@ var app = (function () {
     			attr(a7, "class", "text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700");
     			attr(a8, "href", "/profile");
     			attr(a8, "class", "text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700");
-    			attr(div2, "class", div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? "block" : "hidden"));
+    			attr(div2, "class", div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? 'block' : 'hidden'));
     		},
     		m(target, anchor) {
     			insert(target, div3, anchor);
@@ -29124,7 +29247,7 @@ var app = (function () {
     			}
     		},
     		p(ctx, [dirty]) {
-    			if (dirty & /*dropdownPopoverShow*/ 1 && div2_class_value !== (div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? "block" : "hidden"))) {
+    			if (dirty & /*dropdownPopoverShow*/ 1 && div2_class_value !== (div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? 'block' : 'hidden'))) {
     				attr(div2, "class", div2_class_value);
     			}
     		},
@@ -29157,14 +29280,14 @@ var app = (function () {
     	};
 
     	function a0_binding($$value) {
-    		binding_callbacks[$$value ? "unshift" : "push"](() => {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			btnDropdownRef = $$value;
     			$$invalidate(1, btnDropdownRef);
     		});
     	}
 
     	function div2_binding($$value) {
-    		binding_callbacks[$$value ? "unshift" : "push"](() => {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			popoverDropdownRef = $$value;
     			$$invalidate(2, popoverDropdownRef);
     		});
@@ -29187,7 +29310,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Navbars\AuthNavbar.svelte generated by Svelte v3.35.0 */
+    /* src/components/Navbars/AuthNavbar.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$b(ctx) {
     	let nav;
@@ -29271,7 +29394,7 @@ var app = (function () {
     			attr(li4, "class", "flex items-center");
     			attr(li5, "class", "flex items-center");
     			attr(ul1, "class", "flex flex-col lg:flex-row list-none lg:ml-auto");
-    			attr(div1, "class", div1_class_value = "lg:flex flex-grow items-center bg-white lg:bg-opacity-0 lg:shadow-none rounded shadow-lg " + (/*navbarOpen*/ ctx[0] ? "block" : "hidden"));
+    			attr(div1, "class", div1_class_value = "lg:flex flex-grow items-center bg-white lg:bg-opacity-0 lg:shadow-none rounded shadow-lg " + (/*navbarOpen*/ ctx[0] ? 'block' : 'hidden'));
     			attr(div1, "id", "example-navbar-warning");
     			attr(div2, "class", "container px-4 mx-auto flex flex-wrap items-center justify-between");
     			attr(nav, "class", "top-0 absolute z-50 w-full flex flex-wrap items-center justify-between px-2 py-3 navbar-expand-lg");
@@ -29310,7 +29433,7 @@ var app = (function () {
     			}
     		},
     		p(ctx, [dirty]) {
-    			if (!current || dirty & /*navbarOpen*/ 1 && div1_class_value !== (div1_class_value = "lg:flex flex-grow items-center bg-white lg:bg-opacity-0 lg:shadow-none rounded shadow-lg " + (/*navbarOpen*/ ctx[0] ? "block" : "hidden"))) {
+    			if (!current || dirty & /*navbarOpen*/ 1 && div1_class_value !== (div1_class_value = "lg:flex flex-grow items-center bg-white lg:bg-opacity-0 lg:shadow-none rounded shadow-lg " + (/*navbarOpen*/ ctx[0] ? 'block' : 'hidden'))) {
     				attr(div1, "class", div1_class_value);
     			}
     		},
@@ -29349,7 +29472,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Footers\FooterSmall.svelte generated by Svelte v3.35.0 */
+    /* src/components/Footers/FooterSmall.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$a(ctx) {
     	let footer;
@@ -29399,8 +29522,8 @@ var app = (function () {
     			attr(div4, "class", "container mx-auto px-4");
 
     			attr(footer, "class", footer_class_value = "pb-6 " + (/*absolute*/ ctx[0]
-    			? "absolute w-full bottom-0 bg-blueGray-800"
-    			: "relative"));
+    			? 'absolute w-full bottom-0 bg-blueGray-800'
+    			: 'relative'));
     		},
     		m(target, anchor) {
     			insert(target, footer, anchor);
@@ -29419,8 +29542,8 @@ var app = (function () {
     		},
     		p(ctx, [dirty]) {
     			if (dirty & /*absolute*/ 1 && footer_class_value !== (footer_class_value = "pb-6 " + (/*absolute*/ ctx[0]
-    			? "absolute w-full bottom-0 bg-blueGray-800"
-    			: "relative"))) {
+    			? 'absolute w-full bottom-0 bg-blueGray-800'
+    			: 'relative'))) {
     				attr(footer, "class", footer_class_value);
     			}
     		},
@@ -29437,7 +29560,7 @@ var app = (function () {
     	let { absolute = false } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("absolute" in $$props) $$invalidate(0, absolute = $$props.absolute);
+    		if ('absolute' in $$props) $$invalidate(0, absolute = $$props.absolute);
     	};
 
     	return [absolute, date];
@@ -29450,7 +29573,7 @@ var app = (function () {
     	}
     }
 
-    /* src\views\auth\Login.svelte generated by Svelte v3.35.0 */
+    /* src/views/auth/Login.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$9(ctx) {
     	let div15;
@@ -29530,12 +29653,12 @@ var app = (function () {
     			attr(div0, "class", "text-center mb-3");
     			attr(img0, "alt", "...");
     			attr(img0, "class", "w-5 mr-1");
-    			if (img0.src !== (img0_src_value = github$1)) attr(img0, "src", img0_src_value);
+    			if (!src_url_equal(img0.src, img0_src_value = github$1)) attr(img0, "src", img0_src_value);
     			attr(button0, "class", "bg-white active:bg-blueGray-50 text-blueGray-700 font-normal px-4 py-2 rounded outline-none focus:outline-none mr-2 mb-1 uppercase shadow hover:shadow-md inline-flex items-center font-bold text-xs ease-linear transition-all duration-150");
     			attr(button0, "type", "button");
     			attr(img1, "alt", "...");
     			attr(img1, "class", "w-5 mr-1");
-    			if (img1.src !== (img1_src_value = google$1)) attr(img1, "src", img1_src_value);
+    			if (!src_url_equal(img1.src, img1_src_value = google$1)) attr(img1, "src", img1_src_value);
     			attr(button1, "class", "bg-white active:bg-blueGray-50 text-blueGray-700 font-normal px-4 py-2 rounded outline-none focus:outline-none mr-1 mb-1 uppercase shadow hover:shadow-md inline-flex items-center font-bold text-xs ease-linear transition-all duration-150");
     			attr(button1, "type", "button");
     			attr(div1, "class", "btn-wrapper text-center");
@@ -29610,7 +29733,7 @@ var app = (function () {
     	let { location } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
     	};
 
     	return [location];
@@ -29623,7 +29746,7 @@ var app = (function () {
     	}
     }
 
-    /* src\views\auth\Register.svelte generated by Svelte v3.35.0 */
+    /* src/views/auth/Register.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$8(ctx) {
     	let div13;
@@ -29726,12 +29849,12 @@ var app = (function () {
     			attr(div0, "class", "text-center mb-3");
     			attr(img0, "alt", "...");
     			attr(img0, "class", "w-5 mr-1");
-    			if (img0.src !== (img0_src_value = github)) attr(img0, "src", img0_src_value);
+    			if (!src_url_equal(img0.src, img0_src_value = github)) attr(img0, "src", img0_src_value);
     			attr(button0, "class", "bg-white active:bg-blueGray-50 text-blueGray-700 font-normal px-4 py-2 rounded outline-none focus:outline-none mr-2 mb-1 uppercase shadow hover:shadow-md inline-flex items-center font-bold text-xs ease-linear transition-all duration-150");
     			attr(button0, "type", "button");
     			attr(img1, "alt", "...");
     			attr(img1, "class", "w-5 mr-1");
-    			if (img1.src !== (img1_src_value = google)) attr(img1, "src", img1_src_value);
+    			if (!src_url_equal(img1.src, img1_src_value = google)) attr(img1, "src", img1_src_value);
     			attr(button1, "class", "bg-white active:bg-blueGray-50 text-blueGray-700 font-normal px-4 py-2 rounded outline-none focus:outline-none mr-1 mb-1 uppercase shadow hover:shadow-md inline-flex items-center font-bold text-xs ease-linear transition-all duration-150");
     			attr(button1, "type", "button");
     			attr(div1, "class", "btn-wrapper text-center");
@@ -29818,7 +29941,7 @@ var app = (function () {
     	let { location } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
     	};
 
     	return [location];
@@ -29831,7 +29954,7 @@ var app = (function () {
     	}
     }
 
-    /* src\layouts\Auth.svelte generated by Svelte v3.35.0 */
+    /* src/layouts/Auth.svelte generated by Svelte v3.53.1 */
 
     function create_default_slot$2(ctx) {
     	let route0;
@@ -29970,8 +30093,8 @@ var app = (function () {
     	let { auth = "" } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
-    		if ("auth" in $$props) $$invalidate(1, auth = $$props.auth);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
+    		if ('auth' in $$props) $$invalidate(1, auth = $$props.auth);
     	};
 
     	return [location, auth];
@@ -29984,7 +30107,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Dropdowns\IndexDropdown.svelte generated by Svelte v3.35.0 */
+    /* src/components/Dropdowns/IndexDropdown.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$6(ctx) {
     	let div3;
@@ -30086,7 +30209,7 @@ var app = (function () {
     			attr(a7, "class", "text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700");
     			attr(a8, "href", "/profile");
     			attr(a8, "class", "text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700");
-    			attr(div2, "class", div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? "block" : "hidden"));
+    			attr(div2, "class", div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? 'block' : 'hidden'));
     		},
     		m(target, anchor) {
     			insert(target, div3, anchor);
@@ -30138,7 +30261,7 @@ var app = (function () {
     			}
     		},
     		p(ctx, [dirty]) {
-    			if (dirty & /*dropdownPopoverShow*/ 1 && div2_class_value !== (div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? "block" : "hidden"))) {
+    			if (dirty & /*dropdownPopoverShow*/ 1 && div2_class_value !== (div2_class_value = "bg-white text-base z-50 float-left py-2 list-none text-left rounded shadow-lg min-w-48 " + (/*dropdownPopoverShow*/ ctx[0] ? 'block' : 'hidden'))) {
     				attr(div2, "class", div2_class_value);
     			}
     		},
@@ -30171,14 +30294,14 @@ var app = (function () {
     	};
 
     	function a0_binding($$value) {
-    		binding_callbacks[$$value ? "unshift" : "push"](() => {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			btnDropdownRef = $$value;
     			$$invalidate(1, btnDropdownRef);
     		});
     	}
 
     	function div2_binding($$value) {
-    		binding_callbacks[$$value ? "unshift" : "push"](() => {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			popoverDropdownRef = $$value;
     			$$invalidate(2, popoverDropdownRef);
     		});
@@ -30201,7 +30324,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Navbars\IndexNavbar.svelte generated by Svelte v3.35.0 */
+    /* src/components/Navbars/IndexNavbar.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$5(ctx) {
     	let nav;
@@ -30285,7 +30408,7 @@ var app = (function () {
     			attr(li4, "class", "flex items-center");
     			attr(li5, "class", "flex items-center");
     			attr(ul1, "class", "flex flex-col lg:flex-row list-none lg:ml-auto");
-    			attr(div1, "class", div1_class_value = "lg:flex flex-grow items-center " + (/*navbarOpen*/ ctx[0] ? "block" : "hidden"));
+    			attr(div1, "class", div1_class_value = "lg:flex flex-grow items-center " + (/*navbarOpen*/ ctx[0] ? 'block' : 'hidden'));
     			attr(div1, "id", "example-navbar-warning");
     			attr(div2, "class", "container px-4 mx-auto flex flex-wrap items-center justify-between");
     			attr(nav, "class", "top-0 fixed z-50 w-full flex flex-wrap items-center justify-between px-2 py-3 navbar-expand-lg bg-white shadow");
@@ -30324,7 +30447,7 @@ var app = (function () {
     			}
     		},
     		p(ctx, [dirty]) {
-    			if (!current || dirty & /*navbarOpen*/ 1 && div1_class_value !== (div1_class_value = "lg:flex flex-grow items-center " + (/*navbarOpen*/ ctx[0] ? "block" : "hidden"))) {
+    			if (!current || dirty & /*navbarOpen*/ 1 && div1_class_value !== (div1_class_value = "lg:flex flex-grow items-center " + (/*navbarOpen*/ ctx[0] ? 'block' : 'hidden'))) {
     				attr(div1, "class", div1_class_value);
     			}
     		},
@@ -30363,7 +30486,7 @@ var app = (function () {
     	}
     }
 
-    /* src\components\Footers\Footer.svelte generated by Svelte v3.35.0 */
+    /* src/components/Footers/Footer.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$4(ctx) {
     	let footer;
@@ -30472,7 +30595,7 @@ var app = (function () {
     	}
     }
 
-    /* src\views\Index.svelte generated by Svelte v3.35.0 */
+    /* src/views/Index.svelte generated by Svelte v3.53.1 */
 
     function create_default_slot_2(ctx) {
     	let div;
@@ -30485,7 +30608,7 @@ var app = (function () {
     			img = element("img");
     			attr(img, "alt", "...");
     			attr(img, "class", "align-middle border-none max-w-full h-auto rounded-lg");
-    			if (img.src !== (img_src_value = login)) attr(img, "src", img_src_value);
+    			if (!src_url_equal(img.src, img_src_value = login)) attr(img, "src", img_src_value);
     			attr(div, "class", "hover:-mt-4 relative flex flex-col min-w-0 break-words bg-white w-full mb-6 shadow-lg rounded-lg ease-linear transition-all duration-150");
     		},
     		m(target, anchor) {
@@ -30511,7 +30634,7 @@ var app = (function () {
     			img = element("img");
     			attr(img, "alt", "...");
     			attr(img, "class", "align-middle border-none max-w-full h-auto rounded-lg");
-    			if (img.src !== (img_src_value = profile)) attr(img, "src", img_src_value);
+    			if (!src_url_equal(img.src, img_src_value = profile)) attr(img, "src", img_src_value);
     			attr(div, "class", "hover:-mt-4 relative flex flex-col min-w-0 break-words bg-white w-full mb-6 shadow-lg rounded-lg ease-linear transition-all duration-150");
     		},
     		m(target, anchor) {
@@ -30537,7 +30660,7 @@ var app = (function () {
     			img = element("img");
     			attr(img, "alt", "...");
     			attr(img, "class", "align-middle border-none max-w-full h-auto rounded-lg");
-    			if (img.src !== (img_src_value = landing)) attr(img, "src", img_src_value);
+    			if (!src_url_equal(img.src, img_src_value = landing)) attr(img, "src", img_src_value);
     			attr(div, "class", "hover:-mt-4 relative flex flex-col min-w-0 break-words bg-white w-full mb-6 shadow-lg rounded-lg ease-linear transition-all duration-150");
     		},
     		m(target, anchor) {
@@ -30856,7 +30979,7 @@ var app = (function () {
     			create_component(footer.$$.fragment);
     			attr(div3, "class", "container mx-auto items-center flex flex-wrap");
     			attr(img0, "class", "absolute top-0 b-auto right-0 pt-16 sm:w-6/12 -mt-48 sm:mt-0 w-10/12 max-h-860-px");
-    			if (img0.src !== (img0_src_value = patternVue)) attr(img0, "src", img0_src_value);
+    			if (!src_url_equal(img0.src, img0_src_value = patternVue)) attr(img0, "src", img0_src_value);
     			attr(img0, "alt", "...");
     			attr(section0, "class", "header relative pt-16 items-center flex h-screen max-h-860-px");
     			attr(div4, "class", "-mt-20 top-0 bottom-auto left-0 right-0 w-full absolute h-20");
@@ -30864,22 +30987,22 @@ var app = (function () {
     			attr(div24, "class", "container mx-auto");
     			attr(div27, "class", "w-full md:w-4/12 px-12 md:px-4 ml-auto mr-auto mt-48");
     			attr(img2, "alt", "...");
-    			if (img2.src !== (img2_src_value = componentBtn)) attr(img2, "src", img2_src_value);
+    			if (!src_url_equal(img2.src, img2_src_value = componentBtn)) attr(img2, "src", img2_src_value);
     			attr(img2, "class", "w-full align-middle rounded absolute shadow-lg max-w-100-px left-145-px -top-29-px z-3");
     			attr(img3, "alt", "...");
-    			if (img3.src !== (img3_src_value = componentProfileCard)) attr(img3, "src", img3_src_value);
+    			if (!src_url_equal(img3.src, img3_src_value = componentProfileCard)) attr(img3, "src", img3_src_value);
     			attr(img3, "class", "w-full align-middle rounded-lg absolute shadow-lg max-w-210-px left-260-px -top-160-px");
     			attr(img4, "alt", "...");
-    			if (img4.src !== (img4_src_value = componentInfoCard)) attr(img4, "src", img4_src_value);
+    			if (!src_url_equal(img4.src, img4_src_value = componentInfoCard)) attr(img4, "src", img4_src_value);
     			attr(img4, "class", "w-full align-middle rounded-lg absolute shadow-lg max-w-180-px left-40-px -top-225-px z-2");
     			attr(img5, "alt", "...");
-    			if (img5.src !== (img5_src_value = componentInfo2)) attr(img5, "src", img5_src_value);
+    			if (!src_url_equal(img5.src, img5_src_value = componentInfo2)) attr(img5, "src", img5_src_value);
     			attr(img5, "class", "w-full align-middle rounded-lg absolute shadow-2xl max-w-200-px -left-50-px top-25-px");
     			attr(img6, "alt", "...");
-    			if (img6.src !== (img6_src_value = componentMenu)) attr(img6, "src", img6_src_value);
+    			if (!src_url_equal(img6.src, img6_src_value = componentMenu)) attr(img6, "src", img6_src_value);
     			attr(img6, "class", "w-full align-middle rounded absolute shadow-lg max-w-580-px -left-20-px top-210-px");
     			attr(img7, "alt", "...");
-    			if (img7.src !== (img7_src_value = componentBtnPink)) attr(img7, "src", img7_src_value);
+    			if (!src_url_equal(img7.src, img7_src_value = componentBtnPink)) attr(img7, "src", img7_src_value);
     			attr(img7, "class", "w-full align-middle rounded absolute shadow-xl max-w-120-px left-195-px top-95-px");
     			attr(div28, "class", "relative flex flex-col min-w-0 w-full mb-6 mt-48 md:mt-0");
     			attr(div29, "class", "w-full md:w-5/12 px-4 mr-auto ml-auto mt-32");
@@ -30889,8 +31012,8 @@ var app = (function () {
     			attr(div57, "class", "w-full md:w-5/12 ml-auto px-12 md:px-4");
     			attr(img14, "alt", "...");
     			attr(img14, "class", "max-w-full rounded-lg shadow-xl");
-    			set_style(img14, "transform", "scale(1) perspective(1040px) rotateY(-11deg)\n              rotateX(2deg) rotate(2deg)");
-    			if (img14.src !== (img14_src_value = documentation)) attr(img14, "src", img14_src_value);
+    			set_style(img14, "transform", "scale(1) perspective(1040px) rotateY(-11deg) rotateX(2deg) rotate(2deg)");
+    			if (!src_url_equal(img14.src, img14_src_value = documentation)) attr(img14, "src", img14_src_value);
     			attr(div58, "class", "w-full md:w-6/12 mr-auto px-4 pt-24 md:pt-0");
     			attr(div59, "class", "items-center flex flex-wrap");
     			attr(div60, "class", "container mx-auto px-4 pb-32 pt-48");
@@ -31056,7 +31179,7 @@ var app = (function () {
     	let { location } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
     	};
 
     	return [location];
@@ -31069,7 +31192,7 @@ var app = (function () {
     	}
     }
 
-    /* src\views\Landing.svelte generated by Svelte v3.35.0 */
+    /* src/views/Landing.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$2(ctx) {
     	let div82;
@@ -31150,9 +31273,7 @@ var app = (function () {
     			main = element("main");
     			div6 = element("div");
 
-    			div6.innerHTML = `<div class="absolute top-0 w-full h-full bg-center bg-cover" style="
-          background-image: url(https://images.unsplash.com/photo-1557804506-669a67965ba0?ixlib=rb-1.2.1&amp;ixid=eyJhcHBfaWQiOjEyMDd9&amp;auto=format&amp;fit=crop&amp;w=1267&amp;q=80);
-        "><span id="blackOverlay" class="w-full h-full absolute opacity-75 bg-black"></span></div> 
+    			div6.innerHTML = `<div class="absolute top-0 w-full h-full bg-center bg-cover" style="background-image: url(https://images.unsplash.com/photo-1557804506-669a67965ba0?ixlib=rb-1.2.1&amp;ixid=eyJhcHBfaWQiOjEyMDd9&amp;auto=format&amp;fit=crop&amp;w=1267&amp;q=80); "><span id="blackOverlay" class="w-full h-full absolute opacity-75 bg-black"></span></div> 
       <div class="container relative mx-auto"><div class="items-center flex flex-wrap"><div class="w-full lg:w-6/12 px-4 ml-auto mr-auto text-center"><div class="pr-12"><h1 class="text-white font-semibold text-5xl">Your story starts with us.</h1> 
               <p class="mt-4 text-lg text-blueGray-200">This is a simple example of a Landing Page you can build using
                 Notus Svelte. It features multiple CSS components
@@ -31342,25 +31463,25 @@ var app = (function () {
     			attr(section1, "class", "relative py-20");
     			attr(div43, "class", "flex flex-wrap justify-center text-center mb-24");
     			attr(img2, "alt", "...");
-    			if (img2.src !== (img2_src_value = team1)) attr(img2, "src", img2_src_value);
+    			if (!src_url_equal(img2.src, img2_src_value = team1)) attr(img2, "src", img2_src_value);
     			attr(img2, "class", "shadow-lg rounded-full mx-auto max-w-120-px");
     			attr(div45, "class", "pt-6 text-center");
     			attr(div46, "class", "px-6");
     			attr(div47, "class", "w-full md:w-6/12 lg:w-3/12 lg:mb-0 mb-12 px-4");
     			attr(img3, "alt", "...");
-    			if (img3.src !== (img3_src_value = team2$1)) attr(img3, "src", img3_src_value);
+    			if (!src_url_equal(img3.src, img3_src_value = team2$1)) attr(img3, "src", img3_src_value);
     			attr(img3, "class", "shadow-lg rounded-full mx-auto max-w-120-px");
     			attr(div49, "class", "pt-6 text-center");
     			attr(div50, "class", "px-6");
     			attr(div51, "class", "w-full md:w-6/12 lg:w-3/12 lg:mb-0 mb-12 px-4");
     			attr(img4, "alt", "...");
-    			if (img4.src !== (img4_src_value = team3)) attr(img4, "src", img4_src_value);
+    			if (!src_url_equal(img4.src, img4_src_value = team3)) attr(img4, "src", img4_src_value);
     			attr(img4, "class", "shadow-lg rounded-full mx-auto max-w-120-px");
     			attr(div53, "class", "pt-6 text-center");
     			attr(div54, "class", "px-6");
     			attr(div55, "class", "w-full md:w-6/12 lg:w-3/12 lg:mb-0 mb-12 px-4");
     			attr(img5, "alt", "...");
-    			if (img5.src !== (img5_src_value = team4)) attr(img5, "src", img5_src_value);
+    			if (!src_url_equal(img5.src, img5_src_value = team4)) attr(img5, "src", img5_src_value);
     			attr(img5, "class", "shadow-lg rounded-full mx-auto max-w-120-px");
     			attr(div57, "class", "pt-6 text-center");
     			attr(div58, "class", "px-6");
@@ -31470,7 +31591,7 @@ var app = (function () {
     	let { location } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
     	};
 
     	return [location];
@@ -31483,7 +31604,7 @@ var app = (function () {
     	}
     }
 
-    /* src\views\Profile.svelte generated by Svelte v3.35.0 */
+    /* src/views/Profile.svelte generated by Svelte v3.53.1 */
 
     function create_fragment$1(ctx) {
     	let div22;
@@ -31530,9 +31651,7 @@ var app = (function () {
     			main = element("main");
     			section0 = element("section");
 
-    			section0.innerHTML = `<div class="absolute top-0 w-full h-full bg-center bg-cover" style="
-          background-image: url(https://images.unsplash.com/photo-1499336315816-097655dcfbda?ixlib=rb-1.2.1&amp;ixid=eyJhcHBfaWQiOjEyMDd9&amp;auto=format&amp;fit=crop&amp;w=2710&amp;q=80);
-        "><span id="blackOverlay" class="w-full h-full absolute opacity-50 bg-black"></span></div> 
+    			section0.innerHTML = `<div class="absolute top-0 w-full h-full bg-center bg-cover" style="background-image: url(https://images.unsplash.com/photo-1499336315816-097655dcfbda?ixlib=rb-1.2.1&amp;ixid=eyJhcHBfaWQiOjEyMDd9&amp;auto=format&amp;fit=crop&amp;w=2710&amp;q=80); "><span id="blackOverlay" class="w-full h-full absolute opacity-50 bg-black"></span></div> 
       <div class="top-auto bottom-0 left-0 right-0 w-full absolute pointer-events-none overflow-hidden h-70-px" style="transform: translateZ(0);"><svg class="absolute bottom-0 overflow-hidden" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" version="1.1" viewBox="0 0 2560 100" x="0" y="0"><polygon class="text-blueGray-200 fill-current" points="2560 0 2560 100 0 100"></polygon></svg></div>`;
 
     			t2 = space();
@@ -31581,7 +31700,7 @@ var app = (function () {
     			create_component(footer.$$.fragment);
     			attr(section0, "class", "relative block h-500-px");
     			attr(img, "alt", "...");
-    			if (img.src !== (img_src_value = team2)) attr(img, "src", img_src_value);
+    			if (!src_url_equal(img.src, img_src_value = team2)) attr(img, "src", img_src_value);
     			attr(img, "class", "shadow-xl rounded-full h-auto align-middle border-none absolute -m-16 -ml-20 lg:-ml-16 max-w-150-px");
     			attr(div2, "class", "relative");
     			attr(div3, "class", "w-full lg:w-3/12 px-4 lg:order-2 flex justify-center");
@@ -31667,7 +31786,7 @@ var app = (function () {
     	let { location } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("location" in $$props) $$invalidate(0, location = $$props.location);
+    		if ('location' in $$props) $$invalidate(0, location = $$props.location);
     	};
 
     	return [location];
@@ -31680,7 +31799,7 @@ var app = (function () {
     	}
     }
 
-    /* src\App.svelte generated by Svelte v3.35.0 */
+    /* src/App.svelte generated by Svelte v3.53.1 */
 
     function create_default_slot(ctx) {
     	let route0;
@@ -31817,7 +31936,7 @@ var app = (function () {
     	let { url = "" } = $$props;
 
     	$$self.$$set = $$props => {
-    		if ("url" in $$props) $$invalidate(0, url = $$props.url);
+    		if ('url' in $$props) $$invalidate(0, url = $$props.url);
     	};
 
     	return [url];
