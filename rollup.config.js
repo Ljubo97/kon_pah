@@ -26,7 +26,7 @@ const aliases = alias({
 const indexTemplate = `<!--
 
 =========================================================
-* Notus Svelte - v1.1.0 based on Tailwind Starter Kit by Creative Tim
+*  - v1.1.0 based on Tailwind Starter Kit by Creative Tim
 =========================================================
 
 * Product Page: https://www.creative-tim.com/product/notus-svelte
