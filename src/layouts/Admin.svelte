@@ -19,7 +19,7 @@
     
 
   export let location;
-  export let admin = "";
+  export let admin = "admin";
 </script>
 
 <div>

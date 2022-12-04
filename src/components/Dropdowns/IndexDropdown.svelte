@@ -1,4 +1,5 @@
 <script>
+      import Visibility from `Visibility.svelte`
   import { link } from "svelte-routing";
   // library for creating dropdown menu appear on click
   import { createPopper } from "@popperjs/core";
@@ -20,6 +21,7 @@
       });
     }
   };
+  uslov= true;
 </script>
 
 <div>
@@ -72,6 +74,15 @@
     <span
       class="text-sm pt-2 pb-0 px-4 font-bold block w-full whitespace-nowrap bg-transparent text-blueGray-400"
     >
+
+
+    <Visibility>
+      {#if uslov ="true"}
+      
+  
+
+    
+
     Prijava/Registracija
     </span>
     <a
@@ -89,9 +100,15 @@
       Novi korisnik
     </a>
     <div class="h-0 mx-4 my-2 border border-solid border-blueGray-100" />
+
     <span
-      class="text-sm pt-2 pb-0 px-4 font-bold block w-full whitespace-nowrap bg-transparent text-blueGray-400"
-    >
+    class="text-sm pt-2 pb-0 px-4 font-bold block w-full whitespace-nowrap bg-transparent text-blueGray-400"
+  >
+
+    {/if}
+  </Visibility>
+
+   
       Stranice
     </span>
     <a
