@@ -15,11 +15,20 @@
   import Settings from "views/admin/Settings.svelte";
   import Tables from "views/admin/Tables.svelte";
   import Maps from "views/admin/Maps.svelte";
-    import { combinePaths } from "svelte-routing/src/utils";
+    
+    import KarticePlacanja from "../views/admin/KarticePlacanja.svelte";
+    import ZavediUplatu from "../views/admin/ZavediUplatu.svelte";
+    import ObrisiIzvod from "../views/admin/ObrisiIzvod.svelte";
+    import ObrisiStanara from "../views/admin/ObrisiStanara.svelte";
+    import ObrisiUlaz from "../views/admin/ObrisiUlaz.svelte";
+    import IzmjeniIzvod from "../views/admin/IzmjeniIzvod.svelte";
+    import IzmjeniStanara from "../views/admin/IzmjeniStanara.svelte";
+    import IzmjeniUlaz from "../views/admin/IzmjeniUlaz.svelte";
+    
     
 
   export let location;
-  export let admin = "admin";
+  export let admin = "";
 </script>
 
 <div>
@@ -29,6 +38,19 @@
     <HeaderStats />
     <div class="px-4 md:px-10 mx-auto w-full -m-24">
       <Router url="admin">
+        <Route path="obrisiizvod" component="{ObrisiIzvod}" />
+        <Route path="obrisiulaz" component="{ObrisiUlaz}" />
+
+        <Route path="obrisistanara" component="{ObrisiStanara}" />
+        <Route path="izmjeniizvod" component="{IzmjeniIzvod}" />
+        <Route path="izmjeniulaz" component="{IzmjeniUlaz}" />
+
+        <Route path="izmjenistanara" component="{IzmjeniStanara}" />
+        <Route path="karticeplacanja" component="{KarticePlacanja}" />
+        <Route path="zavediuplatu" component="{ZavediUplatu}" />
+
+
+
         <Route path="dodajulaz" component="{DodajUlaz}" />
         <Route path="dodajstanara" component="{DodajStanara}" />
 

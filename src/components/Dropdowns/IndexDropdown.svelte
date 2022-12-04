@@ -21,7 +21,7 @@
       });
     }
   };
-  uslov= true;
+ 
 </script>
 
 <div>
@@ -44,28 +44,28 @@
     </span>
     <a
       use:link
-      href="/admin/dashboard"
+      href="/admin/dodajulaz"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
       Ulazi
     </a>
     <a
       use:link
-      href="/admin/settings"
+      href="/admin/dodajstanara"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
      Stanari
     </a>
     <a
       use:link
-      href="/admin/tables"
+      href="/admin/dodajizvod"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
     Izvodi/Uplate
     </a>
     <a
       use:link
-      href="/admin/maps"
+      href="/admin/zavediuplatu"
       class="text-sm py-2 px-4 font-normal block w-full whitespace-nowrap bg-transparent text-blueGray-700"
     >
      Ostalo
